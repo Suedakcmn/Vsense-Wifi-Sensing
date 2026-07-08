@@ -1,5 +1,20 @@
+# ESP-IDF build outputs
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+
+# Python
 .venv/
 __pycache__/
 *.pyc
-.DS_Store
+.ipynb_checkpoints/
+
+# Data
 data/*.parquet
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
