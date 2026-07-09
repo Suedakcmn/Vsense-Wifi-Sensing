@@ -63,3 +63,30 @@ This is a Week 1 baseline analysis pipeline.
 It is not the final ML model.
 
 Future B-role work should compare empty-room and motion-room recordings, improve thresholding, and later move toward feature extraction and classification.
+
+## Local Test Result
+
+The analysis pipeline was tested with a local `csi_final.parquet` file.
+
+Because the original file is large, smaller local samples were created:
+
+    data/csi_sample_5k.parquet
+    data/csi_sample_20k.parquet
+
+The following commands were tested:
+
+    python server/analyze_recording.py data/csi_sample_5k.parquet --prefix sample_5k
+    python server/analyze_recording.py data/csi_sample_20k.parquet --prefix sample_20k
+
+Generated outputs:
+
+    outputs/sample_5k_heatmap.png
+    outputs/sample_5k_motion_score.png
+    outputs/sample_20k_heatmap.png
+    outputs/sample_20k_motion_score.png
+
+The heatmap and motion score figures were successfully generated locally.
+
+Note:
+
+The tested dataset contains `csi_amplitude`, not raw `csi`.
