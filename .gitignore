@@ -18,3 +18,6 @@ data/*.parquet
 
 # VS Code
 .vscode/
+outputs/
+data/*.dat
+data/**/*.dat
