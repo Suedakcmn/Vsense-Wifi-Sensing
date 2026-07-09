@@ -84,3 +84,45 @@ For every dataset, check:
 - Whether CSI is raw or already amplitude
 - Whether labels are present
 - Whether multiple recordings are mixed in one Parquet file
+
+## Actual Tested Dataset
+
+Local test file:
+
+    data/csi_final.parquet
+
+This file is not committed to Git because it is large.
+
+Observed columns:
+
+| Column | Description |
+|---|---|
+| file_name | Original CSI recording file name |
+| ts_us | Timestamp value from the recording |
+| rssi_a | RSSI value for antenna/chain A |
+| rssi_b | RSSI value for antenna/chain B |
+| rssi_c | RSSI value for antenna/chain C |
+| csi_amplitude | Precomputed CSI amplitude vector |
+
+Important observation:
+
+This dataset does not contain raw `csi` values. It contains precomputed `csi_amplitude`.
+
+Therefore:
+
+- `server/analyze_recording.py` can use this dataset directly.
+- `server/csi_replay.py` and `server/csi_live.py` need `csi_amplitude` compatibility before replay/live testing.
+
+Local samples used for testing:
+
+    data/csi_sample_5k.parquet
+    data/csi_sample_20k.parquet
+
+Generated local outputs:
+
+    outputs/sample_5k_heatmap.png
+    outputs/sample_5k_motion_score.png
+    outputs/sample_20k_heatmap.png
+    outputs/sample_20k_motion_score.png
+
+These data and output files are ignored by Git.
