@@ -1,79 +1,103 @@
 #include "role_rx.h"
-#include <stddef.h>
+
 #include <stdint.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "esp_log.h"
+
+#include "lwip/inet.h"
+#include "lwip/sockets.h"
+
 #include "vsense_config.h"
+#include "vsense_wifi.h"
 
 static const char *TAG = "VSENSE_RX";
 
-static void vsense_rx_wifi_init_placeholder(void)
+static void vsense_rx_udp_task(void *arg)
 {
-    /*
-     * Week 1 skeleton:
-     * Real Wi-Fi initialization is not implemented yet.
-     *
-     * Week 2 hardware step:
-     * Configure ESP32-S3 Wi-Fi mode, channel, MAC filtering, and RX behavior here.
-     */
-    ESP_LOGI(TAG, "Wi-Fi init placeholder.");
-    ESP_LOGI(TAG, "Future Wi-Fi channel: %d", VSENSE_WIFI_CHANNEL);
-}
+    (void)arg;
 
-static void vsense_rx_csi_init_placeholder(void)
-{
-    /*
-     * Week 1 skeleton:
-     * Real ESP-IDF CSI API calls are not enabled yet.
-     *
-     * Week 2 hardware step:
-     * Add esp_wifi_set_csi_config, esp_wifi_set_csi_rx_cb, and esp_wifi_set_csi here.
-     */
-    ESP_LOGI(TAG, "CSI init placeholder.");
-    ESP_LOGI(TAG, "Future responsibility: enable ESP32-S3 CSI callback.");
-}
+    vsense_wifi_connect_sta();
 
-static void vsense_rx_csi_callback_placeholder(
-    const int8_t *csi_payload,
-    size_t csi_len,
-    int rssi,
-    int channel
-)
-{
-    /*
-     * Week 1 skeleton:
-     * This function documents the future CSI callback shape.
-     *
-     * Expected future fields:
-     * - timestamp
-     * - RSSI
-     * - Wi-Fi channel
-     * - CSI payload length
-     * - raw CSI payload
-     */
-    (void)csi_payload;
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 
-    ESP_LOGI(
-        TAG,
-        "CSI callback placeholder: csi_len=%u rssi=%d channel=%d",
-        (unsigned int)csi_len,
-        rssi,
-        channel
-    );
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Failed to create UDP socket.");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    struct sockaddr_in listen_addr = {0};
+    listen_addr.sin_family = AF_INET;
+    listen_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    listen_addr.sin_port = htons(VSENSE_RX_UDP_PORT);
+
+    int bind_result = bind(sock, (struct sockaddr *)&listen_addr, sizeof(listen_addr));
+
+    if (bind_result < 0) {
+        ESP_LOGE(TAG, "UDP bind failed on port %d.", VSENSE_RX_UDP_PORT);
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "RX UDP server listening on port %d.", VSENSE_RX_UDP_PORT);
+
+    uint32_t packets_received = 0;
+    uint32_t last_logged_count = 0;
+
+    while (1) {
+        char rx_buffer[128];
+
+        struct sockaddr_in source_addr = {0};
+        socklen_t socklen = sizeof(source_addr);
+
+        int len = recvfrom(
+            sock,
+            rx_buffer,
+            sizeof(rx_buffer) - 1,
+            0,
+            (struct sockaddr *)&source_addr,
+            &socklen
+        );
+
+        if (len < 0) {
+            ESP_LOGW(TAG, "UDP receive failed.");
+            continue;
+        }
+
+        rx_buffer[len] = '\0';
+        packets_received++;
+
+        if ((packets_received - last_logged_count) >= 100) {
+            ESP_LOGI(
+                TAG,
+                "RX packets_received=%lu last_payload=\"%s\"",
+                (unsigned long)packets_received,
+                rx_buffer
+            );
+
+            last_logged_count = packets_received;
+        }
+    }
 }
 
 void vsense_role_rx_start(void)
 {
     ESP_LOGI(TAG, "RX role selected.");
-    ESP_LOGI(TAG, "Future responsibility: enable CSI collection on Wi-Fi channel %d.", VSENSE_WIFI_CHANNEL);
-    ESP_LOGI(TAG, "Future responsibility: forward CSI frames to collector via UDP/MQTT.");
+    ESP_LOGI(TAG, "RX will connect to Wi-Fi and listen on UDP port %d.", VSENSE_RX_UDP_PORT);
+    ESP_LOGI(TAG, "CSI callback will be added after live UDP link works.");
 
-    vsense_rx_wifi_init_placeholder();
-    vsense_rx_csi_init_placeholder();
-
-    /*
-     * Build-only placeholder call so the callback skeleton is compiled and checked.
-     * This does not represent real CSI data.
-     */
-    vsense_rx_csi_callback_placeholder(NULL, 0, 0, VSENSE_WIFI_CHANNEL);
+    xTaskCreate(
+        vsense_rx_udp_task,
+        "vsense_rx_udp_task",
+        6144,
+        NULL,
+        5,
+        NULL
+    );
 }
