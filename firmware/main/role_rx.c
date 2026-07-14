@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
-
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -66,17 +66,44 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
         );
 
         if (s_collector_sock >= 0) {
-            char message[192];
+            int amp_sum = 0;
+            int amp_max = 0;
+            int sample_count = 0;
+
+            for (int i = 0; i + 1 < data->len; i += 2) {
+                int8_t imag = (int8_t)data->buf[i];
+                int8_t real = (int8_t)data->buf[i + 1];
+
+                int amp = abs(real) + abs(imag);
+
+                amp_sum += amp;
+
+                if (amp > amp_max) {
+                    amp_max = amp;
+                }
+
+                sample_count++;
+            }
+
+            int amp_mean = 0;
+
+            if (sample_count > 0) {
+                amp_mean = amp_sum / sample_count;
+            }
+
+            char message[256];
 
             int message_len = snprintf(
                 message,
                 sizeof(message),
-                "{\"node_id\":\"%s\",\"frame_count\":%lu,\"len\":%d,\"rssi\":%d,\"channel\":%d}",
+                "{\"node_id\":\"%s\",\"frame_count\":%lu,\"len\":%d,\"rssi\":%d,\"channel\":%d,\"amp_mean\":%d,\"amp_max\":%d}",
                 VSENSE_NODE_ID,
                 (unsigned long)s_csi_frames_received,
                 data->len,
                 data->rx_ctrl.rssi,
-                data->rx_ctrl.channel
+                data->rx_ctrl.channel,
+                amp_mean,
+                amp_max
             );
 
             sendto(

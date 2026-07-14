@@ -28,7 +28,9 @@ while True:
             f"frame={payload.get('frame_count')} "
             f"len={payload.get('len')} "
             f"rssi={payload.get('rssi')} "
-            f"channel={payload.get('channel')}"
+            f"channel={payload.get('channel')} "
+            f"amp_mean={payload.get('amp_mean')} "
+            f"amp_max={payload.get('amp_max')}"
         )
     except json.JSONDecodeError:
         print(f"[{now}] packet={packet_count} from={addr[0]} raw={text}")
