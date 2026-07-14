@@ -1,5 +1,4 @@
-git merge origin/main --allow-unrelated-histories --no-commit#include "role_rx.h"
-
+#include "role_rx.h"
 #include <stddef.h>
 #include <stdint.h>
 
