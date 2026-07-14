@@ -8,22 +8,21 @@
  * Later, these values can move to menuconfig/Kconfig or sdkconfig.defaults.
  */
 
-#define VSENSE_NODE_ID              "tx_01"
+#define VSENSE_NODE_ID              "node_01"
 
 /*
  * Select node role:
  * - "TX": transmitter node, will send Wi-Fi packets
  * - "RX": receiver node, will collect CSI
  */
-#define VSENSE_NODE_ROLE            "TX"
+#define VSENSE_NODE_ROLE            "RX"
 
 #define VSENSE_WIFI_CHANNEL         6
 #define VSENSE_PACKET_RATE_HZ       100
-#define VSENSE_WIFI_SSID            "CHANGE_ME"
-#define VSENSE_WIFI_PASSWORD        "CHANGE_ME"
-
+#define VSENSE_WIFI_SSID            "ValensasSetup"
+#define VSENSE_WIFI_PASSWORD        "setup1234"
 #define VSENSE_RX_UDP_PORT          3333
-#define VSENSE_TX_TARGET_IP         "CHANGE_ME"
+#define VSENSE_TX_TARGET_IP         "192.168.128.35"
 #define VSENSE_TX_TARGET_PORT       3333
 /*
  * Collector settings for future UDP/MQTT integration.
