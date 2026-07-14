@@ -22,14 +22,11 @@
 #define VSENSE_WIFI_SSID            "ValensasSetup"
 #define VSENSE_WIFI_PASSWORD        "setup1234"
 #define VSENSE_RX_UDP_PORT          3333
-#define VSENSE_TX_TARGET_IP         "192.168.128.35"
+#define VSENSE_RX_IP                "192.168.128.35"
 #define VSENSE_TX_TARGET_PORT       3333
-/*
- * Collector settings for future UDP/MQTT integration.
- * These are placeholders for now.
- */
-#define VSENSE_COLLECTOR_IP         "127.0.0.1"
-#define VSENSE_COLLECTOR_UDP_PORT   3333
+
+#define VSENSE_COLLECTOR_IP         "192.168.128.172"
+#define VSENSE_COLLECTOR_UDP_PORT   4444
 
 #define VSENSE_MQTT_BROKER_URI      "mqtt://127.0.0.1"
 #define VSENSE_MQTT_TOPIC_CSI       "vsense/node_01/csi"

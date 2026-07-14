@@ -35,7 +35,7 @@ static void vsense_tx_task(void *arg)
     struct sockaddr_in dest_addr = {0};
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_port = htons(VSENSE_TX_TARGET_PORT);
-    dest_addr.sin_addr.s_addr = inet_addr(VSENSE_TX_TARGET_IP);
+    dest_addr.sin_addr.s_addr = inet_addr(VSENSE_RX_IP);
 
     uint32_t packets_sent = 0;
     uint32_t last_logged_count = 0;
@@ -43,7 +43,7 @@ static void vsense_tx_task(void *arg)
     const TickType_t delay_ticks = pdMS_TO_TICKS(1000 / VSENSE_PACKET_RATE_HZ);
 
     ESP_LOGI(TAG, "TX UDP task started.");
-    ESP_LOGI(TAG, "Target IP: %s", VSENSE_TX_TARGET_IP);
+    ESP_LOGI(TAG, "Target IP: %s", VSENSE_RX_IP);
     ESP_LOGI(TAG, "Target port: %d", VSENSE_TX_TARGET_PORT);
     ESP_LOGI(TAG, "Target packet rate: %d Hz", VSENSE_PACKET_RATE_HZ);
 

@@ -1,5 +1,5 @@
 #include "role_rx.h"
-
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -21,7 +21,30 @@ static const char *TAG = "VSENSE_RX";
 
 static volatile uint32_t s_csi_frames_received = 0;
 static uint32_t s_last_logged_csi_count = 0;
+static int s_collector_sock = -1;
+static struct sockaddr_in s_collector_addr;
 
+static void vsense_rx_collector_init(void)
+{
+    s_collector_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+
+    if (s_collector_sock < 0) {
+        ESP_LOGE(TAG, "Failed to create collector UDP socket.");
+        return;
+    }
+
+    memset(&s_collector_addr, 0, sizeof(s_collector_addr));
+    s_collector_addr.sin_family = AF_INET;
+    s_collector_addr.sin_port = htons(VSENSE_COLLECTOR_UDP_PORT);
+    s_collector_addr.sin_addr.s_addr = inet_addr(VSENSE_COLLECTOR_IP);
+
+    ESP_LOGI(
+        TAG,
+        "Collector target configured: %s:%d",
+        VSENSE_COLLECTOR_IP,
+        VSENSE_COLLECTOR_UDP_PORT
+    );
+}
 static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
 {
     (void)ctx;
@@ -41,6 +64,30 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
             data->rx_ctrl.rssi,
             data->rx_ctrl.channel
         );
+
+        if (s_collector_sock >= 0) {
+            char message[192];
+
+            int message_len = snprintf(
+                message,
+                sizeof(message),
+                "{\"node_id\":\"%s\",\"frame_count\":%lu,\"len\":%d,\"rssi\":%d,\"channel\":%d}",
+                VSENSE_NODE_ID,
+                (unsigned long)s_csi_frames_received,
+                data->len,
+                data->rx_ctrl.rssi,
+                data->rx_ctrl.channel
+            );
+
+            sendto(
+                s_collector_sock,
+                message,
+                message_len,
+                0,
+                (struct sockaddr *)&s_collector_addr,
+                sizeof(s_collector_addr)
+            );
+        }
 
         s_last_logged_csi_count = s_csi_frames_received;
     }
@@ -96,6 +143,7 @@ static void vsense_rx_udp_task(void *arg)
     (void)arg;
 
     vsense_wifi_connect_sta();
+    vsense_rx_collector_init();
     vsense_rx_csi_init();
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
