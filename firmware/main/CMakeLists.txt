@@ -3,6 +3,13 @@ idf_component_register(
         "app_main.c"
         "role_tx.c"
         "role_rx.c"
+        "vsense_wifi.c"
     INCLUDE_DIRS
         "."
+    REQUIRES
+        esp_wifi
+        esp_event
+        esp_netif
+        nvs_flash
+        lwip
 )
