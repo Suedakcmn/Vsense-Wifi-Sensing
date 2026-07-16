@@ -6,10 +6,12 @@
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_timer.h"
 
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
@@ -18,11 +20,26 @@
 #include "vsense_wifi.h"
 
 static const char *TAG = "VSENSE_RX";
-
+static QueueHandle_t s_csi_queue = NULL;
 static volatile uint32_t s_csi_frames_received = 0;
-static uint32_t s_last_logged_csi_count = 0;
+static volatile uint32_t s_csi_frames_queued = 0;
+static volatile uint32_t s_csi_frames_sent = 0;
+static volatile uint32_t s_csi_frames_dropped = 0;
 static int s_collector_sock = -1;
 static struct sockaddr_in s_collector_addr;
+
+#define VSENSE_MAX_CSI_LEN 256
+#define VSENSE_CSI_QUEUE_LENGTH 8
+#define VSENSE_RAW_SEND_EVERY_N_FRAMES 10
+
+typedef struct {
+    int64_t ts_us;
+    uint32_t frame_count;
+    int8_t rssi;
+    uint8_t channel;
+    uint16_t len;
+    int8_t csi[VSENSE_MAX_CSI_LEN];
+} vsense_csi_frame_t;
 
 static void vsense_rx_collector_init(void)
 {
@@ -45,78 +62,186 @@ static void vsense_rx_collector_init(void)
         VSENSE_COLLECTOR_UDP_PORT
     );
 }
+static int vsense_build_raw_csi_json(
+    char *output,
+    size_t output_size,
+    const vsense_csi_frame_t *frame
+)
+{
+    if (output == NULL || frame == NULL || output_size == 0) {
+        return -1;
+    }
+
+    int written = snprintf(
+        output,
+        output_size,
+        "{\"ts_us\":%lld,"
+        "\"node_id\":\"%s\","
+        "\"frame_count\":%lu,"
+        "\"rssi\":%d,"
+        "\"channel\":%u,"
+        "\"len\":%u,"
+        "\"csi\":[",
+        (long long)frame->ts_us,
+        VSENSE_NODE_ID,
+        (unsigned long)frame->frame_count,
+        frame->rssi,
+        frame->channel,
+        frame->len
+    );
+
+    if (written < 0 || (size_t)written >= output_size) {
+        return -1;
+    }
+
+    size_t offset = (size_t)written;
+
+    for (uint16_t i = 0; i < frame->len; i++) {
+        written = snprintf(
+            output + offset,
+            output_size - offset,
+            i == 0 ? "%d" : ",%d",
+            frame->csi[i]
+        );
+
+        if (written < 0 || (size_t)written >= output_size - offset) {
+            return -1;
+        }
+
+        offset += (size_t)written;
+    }
+
+    written = snprintf(
+        output + offset,
+        output_size - offset,
+        "]}"
+    );
+
+    if (written < 0 || (size_t)written >= output_size - offset) {
+        return -1;
+    }
+
+    offset += (size_t)written;
+    return (int)offset;
+}
+static void vsense_csi_sender_task(void *arg)
+{
+    (void)arg;
+
+    vsense_csi_frame_t frame;
+    char json_message[2048];
+
+    ESP_LOGI(TAG, "Raw CSI sender task started.");
+
+    while (true) {
+        if (xQueueReceive(s_csi_queue, &frame, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        if (s_collector_sock < 0) {
+            s_csi_frames_dropped++;
+            continue;
+        }
+
+        int message_len = vsense_build_raw_csi_json(
+            json_message,
+            sizeof(json_message),
+            &frame
+        );
+
+        if (message_len <= 0) {
+            ESP_LOGW(TAG, "Raw CSI JSON buffer was too small.");
+            s_csi_frames_dropped++;
+            continue;
+        }
+
+        int sent_len = sendto(
+            s_collector_sock,
+            json_message,
+            message_len,
+            0,
+            (struct sockaddr *)&s_collector_addr,
+            sizeof(s_collector_addr)
+        );
+
+        if (sent_len < 0) {
+            ESP_LOGW(TAG, "Failed to send raw CSI frame.");
+            s_csi_frames_dropped++;
+            continue;
+        }
+
+        if (sent_len != message_len) {
+            ESP_LOGW(
+                TAG,
+                "Incomplete raw CSI send: expected=%d sent=%d",
+                message_len,
+                sent_len
+            );
+            s_csi_frames_dropped++;
+            continue;
+        }
+
+        s_csi_frames_sent++;
+
+        if ((s_csi_frames_sent % 100) == 0) {
+            ESP_LOGI(
+                TAG,
+                "Raw CSI sent=%lu queued=%lu dropped=%lu last_len=%u",
+                (unsigned long)s_csi_frames_sent,
+                (unsigned long)s_csi_frames_queued,
+                (unsigned long)s_csi_frames_dropped,
+                frame.len
+            );
+        }
+    }
+}
+
 static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
 {
     (void)ctx;
 
-    if (data == NULL || data->buf == NULL) {
+    if (data == NULL || data->buf == NULL || s_csi_queue == NULL) {
         return;
     }
 
     s_csi_frames_received++;
 
-    if ((s_csi_frames_received - s_last_logged_csi_count) >= 100) {
+    if ((s_csi_frames_received % VSENSE_RAW_SEND_EVERY_N_FRAMES) != 0) {
+        return;
+    }
+
+    vsense_csi_frame_t frame = {
+        .ts_us = esp_timer_get_time(),
+        .frame_count = s_csi_frames_received,
+        .rssi = data->rx_ctrl.rssi,
+        .channel = data->rx_ctrl.channel,
+        .len = 0,
+    };
+
+    frame.len = (uint16_t)data->len;
+
+    if (frame.len > VSENSE_MAX_CSI_LEN) {
+        frame.len = VSENSE_MAX_CSI_LEN;
+    }
+    memcpy(frame.csi, data->buf, frame.len);
+
+    if (xQueueSend(s_csi_queue, &frame, 0) == pdTRUE) {
+        s_csi_frames_queued++;
+    } else {
+        s_csi_frames_dropped++;
+    }
+
+    if ((s_csi_frames_received % 1000) == 0) {
         ESP_LOGI(
             TAG,
-            "CSI frames_received=%lu len=%d rssi=%d channel=%d",
+            "CSI received=%lu queued=%lu sent=%lu dropped=%lu len=%u rssi=%d",
             (unsigned long)s_csi_frames_received,
-            data->len,
-            data->rx_ctrl.rssi,
-            data->rx_ctrl.channel
+            (unsigned long)s_csi_frames_queued,
+            (unsigned long)s_csi_frames_sent,
+            (unsigned long)s_csi_frames_dropped,
+            frame.len,
+            frame.rssi
         );
-
-        if (s_collector_sock >= 0) {
-            int amp_sum = 0;
-            int amp_max = 0;
-            int sample_count = 0;
-
-            for (int i = 0; i + 1 < data->len; i += 2) {
-                int8_t imag = (int8_t)data->buf[i];
-                int8_t real = (int8_t)data->buf[i + 1];
-
-                int amp = abs(real) + abs(imag);
-
-                amp_sum += amp;
-
-                if (amp > amp_max) {
-                    amp_max = amp;
-                }
-
-                sample_count++;
-            }
-
-            int amp_mean = 0;
-
-            if (sample_count > 0) {
-                amp_mean = amp_sum / sample_count;
-            }
-
-            char message[256];
-
-            int message_len = snprintf(
-                message,
-                sizeof(message),
-                "{\"node_id\":\"%s\",\"frame_count\":%lu,\"len\":%d,\"rssi\":%d,\"channel\":%d,\"amp_mean\":%d,\"amp_max\":%d}",
-                VSENSE_NODE_ID,
-                (unsigned long)s_csi_frames_received,
-                data->len,
-                data->rx_ctrl.rssi,
-                data->rx_ctrl.channel,
-                amp_mean,
-                amp_max
-            );
-
-            sendto(
-                s_collector_sock,
-                message,
-                message_len,
-                0,
-                (struct sockaddr *)&s_collector_addr,
-                sizeof(s_collector_addr)
-            );
-        }
-
-        s_last_logged_csi_count = s_csi_frames_received;
     }
 }
 
@@ -171,6 +296,35 @@ static void vsense_rx_udp_task(void *arg)
 
     vsense_wifi_connect_sta();
     vsense_rx_collector_init();
+
+    s_csi_queue = xQueueCreate(
+        VSENSE_CSI_QUEUE_LENGTH,
+        sizeof(vsense_csi_frame_t)
+    );
+
+    if (s_csi_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create CSI queue.");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    BaseType_t task_created = xTaskCreate(
+        vsense_csi_sender_task,
+        "csi_sender",
+        6144,
+        NULL,
+        5,
+        NULL
+    );
+
+    if (task_created != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create raw CSI sender task.");
+        vQueueDelete(s_csi_queue);
+        s_csi_queue = NULL;
+        vTaskDelete(NULL);
+        return;
+    }
+
     vsense_rx_csi_init();
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
