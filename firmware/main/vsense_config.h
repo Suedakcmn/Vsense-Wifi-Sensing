@@ -25,7 +25,7 @@
 #define VSENSE_RX_IP                "192.168.128.35"
 #define VSENSE_TX_TARGET_PORT       3333
 
-#define VSENSE_COLLECTOR_IP         "192.168.128.172"
+#define VSENSE_COLLECTOR_IP         "192.168.128.96"
 #define VSENSE_COLLECTOR_UDP_PORT   4444
 
 #define VSENSE_MQTT_BROKER_URI      "mqtt://127.0.0.1"
