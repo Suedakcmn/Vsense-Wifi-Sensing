@@ -19,8 +19,8 @@
 
 #define VSENSE_WIFI_CHANNEL         6
 #define VSENSE_PACKET_RATE_HZ       100
-#define VSENSE_WIFI_SSID            "ValensasSetup"
-#define VSENSE_WIFI_PASSWORD        "setup1234"
+#define VSENSE_WIFI_SSID            "change me"
+#define VSENSE_WIFI_PASSWORD        "change me"
 #define VSENSE_RX_UDP_PORT          3333
 #define VSENSE_RX_IP                "192.168.128.35"
 #define VSENSE_TX_TARGET_PORT       3333
