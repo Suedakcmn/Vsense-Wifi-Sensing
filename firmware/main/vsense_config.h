@@ -19,6 +19,7 @@
 
 #define VSENSE_WIFI_CHANNEL         6
 #define VSENSE_PACKET_RATE_HZ       100
+#define VSENSE_HEALTH_INTERVAL_MS   5000
 #define VSENSE_WIFI_SSID            "change me"
 #define VSENSE_WIFI_PASSWORD        "change me"
 #define VSENSE_RX_UDP_PORT          3333
