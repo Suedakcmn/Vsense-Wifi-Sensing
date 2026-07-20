@@ -2,6 +2,7 @@
 #define VSENSE_MQTT_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 void vsense_mqtt_start(void);
@@ -19,6 +20,12 @@ bool vsense_mqtt_publish_health(
     uint32_t csi_dropped,
     uint32_t queue_depth,
     int8_t last_rssi
+);
+
+
+bool vsense_mqtt_publish_csi(
+    const char *payload,
+    size_t payload_length
 );
 
 #endif /* VSENSE_MQTT_H */
