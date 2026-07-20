@@ -66,7 +66,7 @@ def parquet_messages(path, node_id):
         yield message
 
 
-def jsonl_messages(path, node_id):
+def jsonl_messages(path, node_id, override_node_id=False):
     with open(path, "r", encoding="utf-8") as file:
         for line_number, line in enumerate(file, start=1):
             line = line.strip()
@@ -83,20 +83,24 @@ def jsonl_messages(path, node_id):
                 )
                 continue
 
-            if "node_id" not in message:
+            if override_node_id or "node_id" not in message:
                 message["node_id"] = node_id
 
             yield message
 
 
-def load_messages(path, node_id):
+def load_messages(path, node_id, override_node_id=False):
     suffix = Path(path).suffix.lower()
 
     if suffix == ".parquet":
         return parquet_messages(path, node_id)
 
     if suffix == ".jsonl":
-        return jsonl_messages(path, node_id)
+        return jsonl_messages(
+    path,
+    node_id,
+    override_node_id,
+)
 
     raise ValueError(
         f"Unsupported input format: {suffix}. "
@@ -153,7 +157,11 @@ def main():
         default=1883,
         help="MQTT broker port",
     )
-
+    parser.add_argument(
+    "--override-node-id",
+    action="store_true",
+    help="Replace node_id in recorded messages with --node-id",
+)
     args = parser.parse_args()
 
     client = None
@@ -177,9 +185,10 @@ def main():
         )
 
     messages = load_messages(
-        args.input,
-        args.node_id,
-    )
+    args.input,
+    args.node_id,
+    args.override_node_id,
+)
 
     count = 0
 
