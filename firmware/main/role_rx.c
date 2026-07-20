@@ -27,6 +27,14 @@ static volatile uint32_t s_csi_frames_received = 0;
 static volatile uint32_t s_csi_frames_queued = 0;
 static volatile uint32_t s_csi_frames_sent = 0;
 static volatile uint32_t s_csi_frames_dropped = 0;
+static volatile uint32_t s_csi_frames_processed = 0;
+
+static volatile uint32_t s_udp_csi_sent = 0;
+static volatile uint32_t s_udp_csi_failed = 0;
+
+static volatile uint32_t s_mqtt_csi_published = 0;
+static volatile uint32_t s_mqtt_csi_failed = 0;
+
 static volatile uint32_t s_udp_packets_received = 0;
 static volatile int8_t s_last_rssi = 0;
 
@@ -84,6 +92,10 @@ static void vsense_rx_health_task(void *arg)
             "csi_received=%lu "
             "csi_queued=%lu "
             "csi_sent=%lu "
+            "udp_csi_sent=%lu "
+            "udp_csi_failed=%lu "
+            "mqtt_csi_published=%lu "
+            "mqtt_csi_failed=%lu "
             "csi_dropped=%lu "
             "queue_depth=%u "
             "last_rssi=%d",
@@ -95,6 +107,10 @@ static void vsense_rx_health_task(void *arg)
             (unsigned long)s_csi_frames_received,
             (unsigned long)s_csi_frames_queued,
             (unsigned long)s_csi_frames_sent,
+            (unsigned long)s_udp_csi_sent,
+            (unsigned long)s_udp_csi_failed,
+            (unsigned long)s_mqtt_csi_published,
+            (unsigned long)s_mqtt_csi_failed,
             (unsigned long)s_csi_frames_dropped,
             (unsigned int)queue_depth,
             (int)s_last_rssi
@@ -108,6 +124,10 @@ static void vsense_rx_health_task(void *arg)
             s_csi_frames_received,
             s_csi_frames_queued,
             s_csi_frames_sent,
+            s_udp_csi_sent,
+            s_udp_csi_failed,
+            s_mqtt_csi_published,
+            s_mqtt_csi_failed,
             s_csi_frames_dropped,
             (uint32_t)queue_depth,
             s_last_rssi
@@ -211,18 +231,16 @@ static void vsense_csi_sender_task(void *arg)
     vsense_csi_frame_t frame;
     char json_message[2048];
 
-    uint32_t mqtt_published = 0;
-    uint32_t mqtt_failed = 0;
-
     ESP_LOGI(TAG, "Raw CSI sender task started.");
 
     while (true) {
-        if (xQueueReceive(s_csi_queue, &frame, portMAX_DELAY) != pdTRUE) {
-            continue;
-        }
-
-        if (s_collector_sock < 0) {
-            s_csi_frames_dropped++;
+        if (
+            xQueueReceive(
+                s_csi_queue,
+                &frame,
+                portMAX_DELAY
+            ) != pdTRUE
+        ) {
             continue;
         }
 
@@ -233,35 +251,38 @@ static void vsense_csi_sender_task(void *arg)
         );
 
         if (message_len <= 0) {
-            ESP_LOGW(TAG, "Raw CSI JSON buffer was too small.");
-            s_csi_frames_dropped++;
-            continue;
-        }
-
-        int sent_len = sendto(
-            s_collector_sock,
-            json_message,
-            message_len,
-            0,
-            (struct sockaddr *)&s_collector_addr,
-            sizeof(s_collector_addr)
-        );
-
-        if (sent_len < 0) {
-            ESP_LOGW(TAG, "Failed to send raw CSI frame.");
-            s_csi_frames_dropped++;
-            continue;
-        }
-
-        if (sent_len != message_len) {
             ESP_LOGW(
                 TAG,
-                "Incomplete raw CSI send: expected=%d sent=%d",
-                message_len,
-                sent_len
+                "Raw CSI JSON buffer was too small."
             );
             s_csi_frames_dropped++;
             continue;
+        }
+
+        s_csi_frames_processed++;
+
+        /*
+         * UDP and MQTT delivery are intentionally independent.
+         * Failure of one transport must not prevent the other.
+         */
+        if (s_collector_sock >= 0) {
+            int sent_len = sendto(
+                s_collector_sock,
+                json_message,
+                message_len,
+                0,
+                (struct sockaddr *)&s_collector_addr,
+                sizeof(s_collector_addr)
+            );
+
+            if (sent_len == message_len) {
+                s_csi_frames_sent++;
+                s_udp_csi_sent++;
+            } else {
+                s_udp_csi_failed++;
+            }
+        } else {
+            s_udp_csi_failed++;
         }
 
         if (
@@ -270,23 +291,24 @@ static void vsense_csi_sender_task(void *arg)
                 (size_t)message_len
             )
         ) {
-            mqtt_published++;
+            s_mqtt_csi_published++;
         } else {
-            mqtt_failed++;
+            s_mqtt_csi_failed++;
         }
 
-        s_csi_frames_sent++;
-
-        if ((s_csi_frames_sent % 100) == 0) {
+        if ((s_csi_frames_processed % 100) == 0) {
             ESP_LOGI(
                 TAG,
-                "Raw CSI sent=%lu queued=%lu dropped=%lu "
-                "mqtt_published=%lu mqtt_failed=%lu last_len=%u",
-                (unsigned long)s_csi_frames_sent,
-                (unsigned long)s_csi_frames_queued,
+                "CSI delivery processed=%lu "
+                "udp_sent=%lu udp_failed=%lu "
+                "mqtt_published=%lu mqtt_failed=%lu "
+                "queue_dropped=%lu last_len=%u",
+                (unsigned long)s_csi_frames_processed,
+                (unsigned long)s_udp_csi_sent,
+                (unsigned long)s_udp_csi_failed,
+                (unsigned long)s_mqtt_csi_published,
+                (unsigned long)s_mqtt_csi_failed,
                 (unsigned long)s_csi_frames_dropped,
-                (unsigned long)mqtt_published,
-                (unsigned long)mqtt_failed,
                 frame.len
             );
         }
