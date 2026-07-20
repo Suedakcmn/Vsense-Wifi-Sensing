@@ -1,11 +1,15 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 from collections import deque
 
 import numpy as np
 
-from csi_utils import csi_to_amplitude
+from csi_utils import (
+    TemporalCSIFilter,
+    csi_to_amplitude,
+)
 
 
 def parse_args():
@@ -53,6 +57,42 @@ def parse_args():
         type=int,
         default=10,
         help="Consecutive low scores required to stop motion.",
+    )
+
+    parser.add_argument(
+        "--selected-subcarriers",
+        default="server/config/selected_subcarriers.txt",
+        help="File containing comma-separated trimmed amplitude indices.",
+    )
+
+    parser.add_argument(
+        "--filter-history",
+        type=int,
+        default=15,
+    )
+
+    parser.add_argument(
+        "--hampel-window",
+        type=int,
+        default=7,
+    )
+
+    parser.add_argument(
+        "--hampel-n-sigma",
+        type=float,
+        default=3.0,
+    )
+
+    parser.add_argument(
+        "--savgol-window",
+        type=int,
+        default=7,
+    )
+
+    parser.add_argument(
+        "--savgol-polyorder",
+        type=int,
+        default=2,
     )
 
     return parser.parse_args()
@@ -111,9 +151,58 @@ def normalize_amplitude(amplitude):
 
     return (amplitude - mean) / (std + 1e-6)
 
+def load_selected_indices(file_path):
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Selected subcarrier file does not exist: {path}"
+        )
+
+    content = path.read_text(
+        encoding="utf-8"
+    ).strip()
+
+    if not content:
+        raise ValueError(
+            "Selected subcarrier file is empty."
+        )
+
+    indices = np.asarray(
+        [
+            int(value.strip())
+            for value in content.split(",")
+            if value.strip()
+        ],
+        dtype=np.int32,
+    )
+
+    if indices.size == 0:
+        raise ValueError(
+            "No selected subcarrier indices were loaded."
+        )
+
+    return indices
 
 def main():
     args = parse_args()
+
+    selected_indices = load_selected_indices(
+        args.selected_subcarriers
+    )
+
+    temporal_filter = TemporalCSIFilter(
+        history_size=args.filter_history,
+        hampel_window=args.hampel_window,
+        hampel_n_sigma=args.hampel_n_sigma,
+        savgol_window=args.savgol_window,
+        savgol_polyorder=args.savgol_polyorder,
+    )
+
+    print(
+        f"Loaded {len(selected_indices)} selected CSI indices.",
+        file=sys.stderr,
+    )
 
     score_buffer = deque(maxlen=args.window_size)
     previous_normalized = None
@@ -148,7 +237,14 @@ def main():
                 amplitude,
                 args.edge_trim,
             )
-            normalized = normalize_amplitude(cleaned)
+
+            temporally_filtered = temporal_filter.process(
+                cleaned
+            )
+
+            normalized = normalize_amplitude(
+                temporally_filtered
+            )
 
         except json.JSONDecodeError as exc:
             print(
@@ -176,20 +272,27 @@ def main():
 
             previous_normalized = normalized
             score_buffer.clear()
+            temporal_filter.reset()
             high_count = 0
             low_count = 0
             is_moving = False
             continue
-
         frame_difference = np.abs(
             normalized - previous_normalized
         )
 
-        frame_score = float(
-            np.percentile(
-                frame_difference,
-                args.score_percentile,
+        if int(np.max(selected_indices)) >= len(frame_difference):
+            raise ValueError(
+                "A selected CSI index is outside "
+                "the frame-difference vector."
             )
+
+        selected_difference = frame_difference[
+            selected_indices
+        ]
+
+        frame_score = float(
+            np.mean(selected_difference)
         )
         score_buffer.append(frame_score)
 
