@@ -4,6 +4,7 @@ idf_component_register(
         "role_tx.c"
         "role_rx.c"
         "vsense_wifi.c"
+        "vsense_mqtt.c"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -13,4 +14,5 @@ idf_component_register(
         nvs_flash
         lwip
         esp_timer
+        mqtt
 )
