@@ -14,6 +14,14 @@ static const char *TAG = "VSENSE_MQTT";
 static esp_mqtt_client_handle_t s_mqtt_client = NULL;
 static bool s_mqtt_connected = false;
 
+static char s_status_topic[64];
+
+static const char s_status_online_payload[] =
+    "{\"status\":\"online\"}";
+
+static const char s_status_offline_payload[] =
+    "{\"status\":\"offline\"}";
+
 static void vsense_mqtt_event_handler(
     void *handler_args,
     esp_event_base_t base,
@@ -26,14 +34,36 @@ static void vsense_mqtt_event_handler(
     (void)event_data;
 
     switch ((esp_mqtt_event_id_t)event_id) {
-        case MQTT_EVENT_CONNECTED:
+        case MQTT_EVENT_CONNECTED: {
             s_mqtt_connected = true;
+
             ESP_LOGI(
                 TAG,
                 "Connected to MQTT broker: %s",
                 VSENSE_MQTT_BROKER_URI
             );
+
+            int message_id = esp_mqtt_client_publish(
+                s_mqtt_client,
+                s_status_topic,
+                s_status_online_payload,
+                0,
+                1,
+                1
+            );
+
+            if (message_id < 0) {
+                ESP_LOGE(TAG, "Failed to publish online status.");
+            } else {
+                ESP_LOGI(
+                    TAG,
+                    "Node status published: online topic=%s",
+                    s_status_topic
+                );
+            }
+
             break;
+        }
 
         case MQTT_EVENT_DISCONNECTED:
             s_mqtt_connected = false;
@@ -57,8 +87,33 @@ void vsense_mqtt_start(void)
         return;
     }
 
+    int status_topic_length = snprintf(
+        s_status_topic,
+        sizeof(s_status_topic),
+        "vsense/%s/status",
+        VSENSE_NODE_ID
+    );
+
+    if (
+        status_topic_length < 0 ||
+        status_topic_length >= (int)sizeof(s_status_topic)
+    ) {
+        ESP_LOGE(TAG, "MQTT status topic is too long.");
+        return;
+    }
+
     const esp_mqtt_client_config_t mqtt_config = {
         .broker.address.uri = VSENSE_MQTT_BROKER_URI,
+
+        .credentials.client_id = VSENSE_NODE_ID,
+
+        .session.keepalive = 3,
+        .session.last_will.topic = s_status_topic,
+        .session.last_will.msg = s_status_offline_payload,
+        .session.last_will.msg_len = 0,
+        .session.last_will.qos = 1,
+        .session.last_will.retain = 1,
+
         .buffer.size = 2048,
         .buffer.out_size = 4096,
     };
