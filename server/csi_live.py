@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from collections import deque
 
@@ -93,6 +94,22 @@ def parse_args():
         "--savgol-polyorder",
         type=int,
         default=2,
+    )
+
+    parser.add_argument(
+        "--event-log",
+        type=Path,
+        default=None,
+        help=(
+            "Optional JSONL file for motion_start and motion_end events. "
+            "Existing files are appended to."
+        ),
+    )
+
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional recording session identifier included in every event.",
     )
 
     return parser.parse_args()
@@ -200,6 +217,53 @@ def create_node_state(args):
         "low_count": 0,
     }
 
+
+def build_motion_event(
+    event_type,
+    message,
+    node_id,
+    motion_score,
+    threshold,
+    session_id=None,
+):
+    event = {
+        "schema_version": 1,
+        "event_type": event_type,
+        "ts_us": message.get("ts_us"),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "node_id": node_id,
+        "motion_score": round(float(motion_score), 6),
+        "threshold": round(float(threshold), 6),
+    }
+
+    if session_id:
+        event["session_id"] = session_id
+
+    return event
+
+
+def emit_motion_event(event, event_log=None):
+    json_line = json.dumps(
+        event,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    print(json_line, file=sys.stderr, flush=True)
+
+    if event_log is not None:
+        event_log.write(json_line + "\n")
+        event_log.flush()
+
+
+def open_event_log(path):
+    if path is None:
+        return None
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path.open("a", encoding="utf-8")
+
+
 def main():
     args = parse_args()
 
@@ -229,6 +293,14 @@ def main():
         f"Window size: {args.window_size}",
         file=sys.stderr,
     )
+
+    event_log = open_event_log(args.event_log)
+
+    if args.event_log is not None:
+        print(
+            f"Writing motion events to: {args.event_log}",
+            file=sys.stderr,
+        )
 
     for line in sys.stdin:
         line = line.strip()
@@ -367,37 +439,32 @@ def main():
             state["low_count"] += 1
             state["high_count"] = 0
 
+        event_type = None
+
         if (
             not state["is_moving"]
             and state["high_count"] >= args.start_count
         ):
             state["is_moving"] = True
-
-            print(
-                f"EVENT=HAREKET "
-                f"ts_us={message.get('ts_us', '')} "
-                f"node_id={node_id} "
-                f"motion_score={motion_score:.4f} "
-                f"threshold={args.threshold:.4f}",
-                file=sys.stderr,
-                flush=True,
-            )
+            event_type = "motion_start"
 
         elif (
             state["is_moving"]
             and state["low_count"] >= args.stop_count
         ):
             state["is_moving"] = False
+            event_type = "motion_end"
 
-            print(
-                f"EVENT=STILL "
-                f"ts_us={message.get('ts_us', '')} "
-                f"node_id={node_id} "
-                f"motion_score={motion_score:.4f} "
-                f"threshold={args.threshold:.4f}",
-                file=sys.stderr,
-                flush=True,
+        if event_type is not None:
+            event = build_motion_event(
+                event_type,
+                message,
+                node_id,
+                motion_score,
+                args.threshold,
+                args.session_id,
             )
+            emit_motion_event(event, event_log)
 
         status = (
             "HAREKET"
@@ -414,6 +481,9 @@ def main():
             f"status={status}",
             flush=True,
         )
+
+    if event_log is not None:
+        event_log.close()
 
 
 if __name__ == "__main__":
