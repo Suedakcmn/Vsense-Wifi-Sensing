@@ -19,6 +19,7 @@
 
 #include "vsense_config.h"
 #include "vsense_wifi.h"
+#include "vsense_mqtt.h"
 
 static const char *TAG = "VSENSE_RX";
 static QueueHandle_t s_csi_queue = NULL;
@@ -97,6 +98,19 @@ static void vsense_rx_health_task(void *arg)
             (unsigned long)s_csi_frames_dropped,
             (unsigned int)queue_depth,
             (int)s_last_rssi
+        );
+
+        (void)vsense_mqtt_publish_health(
+            uptime_ms,
+            free_heap,
+            minimum_free_heap,
+            s_udp_packets_received,
+            s_csi_frames_received,
+            s_csi_frames_queued,
+            s_csi_frames_sent,
+            s_csi_frames_dropped,
+            (uint32_t)queue_depth,
+            s_last_rssi
         );
 
         vTaskDelay(
@@ -364,6 +378,7 @@ static void vsense_rx_udp_task(void *arg)
     (void)arg;
 
     vsense_wifi_connect_sta();
+    vsense_mqtt_start();
     vsense_rx_collector_init();
 
     s_csi_queue = xQueueCreate(

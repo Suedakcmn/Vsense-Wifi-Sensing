@@ -29,7 +29,7 @@
 #define VSENSE_COLLECTOR_IP         "192.168.128.96"
 #define VSENSE_COLLECTOR_UDP_PORT   4444
 
-#define VSENSE_MQTT_BROKER_URI      "mqtt://127.0.0.1"
+#define VSENSE_MQTT_BROKER_URI "mqtt://192.168.128.96"
 #define VSENSE_MQTT_TOPIC_CSI       "vsense/node_01/csi"
 #define VSENSE_MQTT_TOPIC_HEALTH    "vsense/node_01/health"
 
