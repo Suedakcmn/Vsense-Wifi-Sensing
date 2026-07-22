@@ -25,8 +25,12 @@ static volatile uint32_t s_csi_frames_received = 0;
 static volatile uint32_t s_csi_frames_queued = 0;
 static volatile uint32_t s_csi_frames_sent = 0;
 static volatile uint32_t s_csi_frames_dropped = 0;
+
+
 static int s_collector_sock = -1;
 static struct sockaddr_in s_collector_addr;
+
+
 
 #define VSENSE_MAX_CSI_LEN 256
 #define VSENSE_CSI_QUEUE_LENGTH 8
@@ -203,6 +207,8 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
     if (data == NULL || data->buf == NULL || s_csi_queue == NULL) {
         return;
     }
+
+    
 
     s_csi_frames_received++;
 

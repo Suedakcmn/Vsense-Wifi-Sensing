@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import Optional, Tuple
+from collections import deque
 
+from scipy.signal import savgol_filter
 import numpy as np
 import pandas as pd
 
@@ -148,3 +150,140 @@ def debounce_motion_decision(
     debounced = raw_decision.rolling(window=window, min_periods=1).mean() >= min_ratio
 
     return debounced
+
+
+
+class TemporalCSIFilter:
+    """
+    Apply temporal Hampel outlier removal and Savitzky-Golay
+    smoothing to incoming CSI amplitude frames.
+
+    Each frame has shape:
+        [subcarriers]
+
+    Stored history has shape:
+        [time, subcarriers]
+    """
+
+    def __init__(
+        self,
+        history_size: int = 15,
+        hampel_window: int = 7,
+        hampel_n_sigma: float = 3.0,
+        savgol_window: int = 7,
+        savgol_polyorder: int = 2,
+    ):
+        if history_size < 3:
+            raise ValueError("history_size must be at least 3.")
+
+        if hampel_window < 3:
+            raise ValueError("hampel_window must be at least 3.")
+
+        if savgol_window < 3 or savgol_window % 2 == 0:
+            raise ValueError(
+                "savgol_window must be an odd number and at least 3."
+            )
+
+        if savgol_polyorder >= savgol_window:
+            raise ValueError(
+                "savgol_polyorder must be smaller than savgol_window."
+            )
+
+        if history_size < max(hampel_window, savgol_window):
+            raise ValueError(
+                "history_size must be at least as large as both "
+                "filter windows."
+            )
+
+        self.history = deque(maxlen=history_size)
+        self.hampel_window = hampel_window
+        self.hampel_n_sigma = hampel_n_sigma
+        self.savgol_window = savgol_window
+        self.savgol_polyorder = savgol_polyorder
+        self.expected_length = None
+
+    def reset(self):
+        self.history.clear()
+        self.expected_length = None
+
+    def process(self, amplitude: np.ndarray) -> np.ndarray:
+        frame = np.asarray(
+            amplitude,
+            dtype=np.float32,
+        ).reshape(-1)
+
+        if self.expected_length is None:
+            self.expected_length = len(frame)
+
+        if len(frame) != self.expected_length:
+            self.reset()
+            self.expected_length = len(frame)
+
+        self.history.append(frame.copy())
+
+        history_matrix = np.stack(self.history)
+
+        # Temporal Hampel filter:
+        # inspect the latest sample of every subcarrier using
+        # recent values of that same subcarrier.
+        hampel_length = min(
+            len(history_matrix),
+            self.hampel_window,
+        )
+
+        hampel_history = history_matrix[-hampel_length:]
+
+        temporal_median = np.median(
+            hampel_history,
+            axis=0,
+        )
+
+        temporal_mad = np.median(
+            np.abs(
+                hampel_history - temporal_median
+            ),
+            axis=0,
+        )
+
+        latest_frame = history_matrix[-1].copy()
+
+        threshold = (
+            self.hampel_n_sigma
+            * 1.4826
+            * temporal_mad
+        )
+
+        outlier_mask = (
+            (temporal_mad > 1e-6)
+            & (
+                np.abs(
+                    latest_frame - temporal_median
+                )
+                > threshold
+            )
+        )
+
+        latest_frame[outlier_mask] = temporal_median[
+            outlier_mask
+        ]
+
+        filtered_history = history_matrix.copy()
+        filtered_history[-1] = latest_frame
+
+        # Savitzky-Golay needs enough temporal samples.
+        if len(filtered_history) < self.savgol_window:
+            return latest_frame.astype(np.float32)
+
+        smoothed_history = savgol_filter(
+            filtered_history,
+            window_length=self.savgol_window,
+            polyorder=self.savgol_polyorder,
+            axis=0,
+            mode="interp",
+        )
+
+        return np.asarray(
+            smoothed_history[-1],
+            dtype=np.float32,
+        )
+    

@@ -1,22 +1,98 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 from collections import deque
 
 import numpy as np
 
-from csi_utils import csi_to_amplitude
+from csi_utils import (
+    TemporalCSIFilter,
+    csi_to_amplitude,
+)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Read CSI JSON lines from stdin and compute a simple motion score."
+        description="Read CSI JSON lines from stdin and detect motion."
+    )
+
+    parser.add_argument(
+        "--edge-trim",
+        type=int,
+        default=4,
+        help="Number of amplitude values removed from both edges.",
+    )
+
+    parser.add_argument(
+        "--score-percentile",
+        type=float,
+        default=75.0,
+        help="Percentile of frame differences used as motion score.",
     )
 
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.15,
-        help="Motion score threshold. If motion_score is above this value, motion is detected.",
+        default=0.75,
+        help="Motion score threshold.",
+    )
+
+    parser.add_argument(
+        "--window-size",
+        type=int,
+        default=20,
+        help="Number of recent frame differences used for smoothing.",
+    )
+
+    parser.add_argument(
+        "--start-count",
+        type=int,
+        default=3,
+        help="Consecutive high scores required to start motion.",
+    )
+
+    parser.add_argument(
+        "--stop-count",
+        type=int,
+        default=10,
+        help="Consecutive low scores required to stop motion.",
+    )
+
+    parser.add_argument(
+        "--selected-subcarriers",
+        default="server/config/selected_subcarriers.txt",
+        help="File containing comma-separated trimmed amplitude indices.",
+    )
+
+    parser.add_argument(
+        "--filter-history",
+        type=int,
+        default=15,
+    )
+
+    parser.add_argument(
+        "--hampel-window",
+        type=int,
+        default=7,
+    )
+
+    parser.add_argument(
+        "--hampel-n-sigma",
+        type=float,
+        default=3.0,
+    )
+
+    parser.add_argument(
+        "--savgol-window",
+        type=int,
+        default=7,
+    )
+
+    parser.add_argument(
+        "--savgol-polyorder",
+        type=int,
+        default=2,
     )
 
     return parser.parse_args()
@@ -24,22 +100,129 @@ def parse_args():
 
 def message_to_amplitude(message):
     if "csi_amplitude" in message:
-        return np.array(message["csi_amplitude"], dtype=np.float32)
+        amplitude = np.asarray(
+            message["csi_amplitude"],
+            dtype=np.float32,
+        )
+    elif "csi" in message:
+        amplitude = np.asarray(
+            csi_to_amplitude(message["csi"]),
+            dtype=np.float32,
+        )
+    else:
+        raise ValueError(
+            "Message has neither 'csi' nor 'csi_amplitude'."
+        )
 
-    if "csi" in message:
-        return csi_to_amplitude(message["csi"])
+    if amplitude.ndim != 1:
+        raise ValueError("CSI amplitude must be one-dimensional.")
 
-    raise ValueError("Message has neither 'csi' nor 'csi_amplitude'.")
+    return amplitude
 
+def clean_amplitude(amplitude, edge_trim):
+    amplitude = np.asarray(amplitude, dtype=np.float32)
+
+    if edge_trim > 0:
+        if len(amplitude) <= 2 * edge_trim:
+            raise ValueError(
+                "CSI amplitude is too short for the requested edge trim."
+            )
+
+        amplitude = amplitude[edge_trim:-edge_trim]
+
+    median = float(np.median(amplitude))
+    mad = float(
+        np.median(np.abs(amplitude - median))
+    )
+
+    if mad > 1e-6:
+        robust_z = np.abs(amplitude - median) / (1.4826 * mad)
+        amplitude = np.where(
+            robust_z > 5.0,
+            median,
+            amplitude,
+        )
+
+    return amplitude
+
+def normalize_amplitude(amplitude):
+    mean = float(np.mean(amplitude))
+    std = float(np.std(amplitude))
+
+    return (amplitude - mean) / (std + 1e-6)
+
+def load_selected_indices(file_path):
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Selected subcarrier file does not exist: {path}"
+        )
+
+    content = path.read_text(
+        encoding="utf-8"
+    ).strip()
+
+    if not content:
+        raise ValueError(
+            "Selected subcarrier file is empty."
+        )
+
+    indices = np.asarray(
+        [
+            int(value.strip())
+            for value in content.split(",")
+            if value.strip()
+        ],
+        dtype=np.int32,
+    )
+
+    if indices.size == 0:
+        raise ValueError(
+            "No selected subcarrier indices were loaded."
+        )
+
+    return indices
 
 def main():
     args = parse_args()
-    threshold = args.threshold
-    buffer = deque(maxlen=100)
-    was_moving = False
 
-    print("Reading CSI JSON lines from stdin. Press Ctrl+C to stop.", file=sys.stderr)
-    print(f"Motion threshold: {threshold:.3f}", file=sys.stderr)
+    selected_indices = load_selected_indices(
+        args.selected_subcarriers
+    )
+
+    temporal_filter = TemporalCSIFilter(
+        history_size=args.filter_history,
+        hampel_window=args.hampel_window,
+        hampel_n_sigma=args.hampel_n_sigma,
+        savgol_window=args.savgol_window,
+        savgol_polyorder=args.savgol_polyorder,
+    )
+
+    print(
+        f"Loaded {len(selected_indices)} selected CSI indices.",
+        file=sys.stderr,
+    )
+
+    score_buffer = deque(maxlen=args.window_size)
+    previous_normalized = None
+
+    is_moving = False
+    high_count = 0
+    low_count = 0
+
+    print(
+        "Reading CSI JSON lines from stdin. Press Ctrl+C to stop.",
+        file=sys.stderr,
+    )
+    print(
+        f"Motion threshold: {args.threshold:.3f}",
+        file=sys.stderr,
+    )
+    print(
+        f"Window size: {args.window_size}",
+        file=sys.stderr,
+    )
 
     for line in sys.stdin:
         line = line.strip()
@@ -50,49 +233,119 @@ def main():
         try:
             message = json.loads(line)
             amplitude = message_to_amplitude(message)
+            cleaned = clean_amplitude(
+                amplitude,
+                args.edge_trim,
+            )
+
+            temporally_filtered = temporal_filter.process(
+                cleaned
+            )
+
+            normalized = normalize_amplitude(
+                temporally_filtered
+            )
+
         except json.JSONDecodeError as exc:
-            print(f"Skipping invalid JSON line: {exc}", file=sys.stderr)
+            print(
+                f"Skipping invalid JSON line: {exc}",
+                file=sys.stderr,
+            )
             continue
+
         except Exception as exc:
-            print(f"Skipping invalid CSI message: {exc}", file=sys.stderr)
+            print(
+                f"Skipping invalid CSI message: {exc}",
+                file=sys.stderr,
+            )
             continue
 
-        buffer.append(amplitude)
-
-        try:
-            matrix = np.stack(buffer)
-            motion_score = matrix.var() if len(buffer) > 1 else 0.0
-        except ValueError:
-            print("Skipping frame because CSI vector length changed.", file=sys.stderr)
-            buffer.clear()
-            was_moving = False
+        if previous_normalized is None:
+            previous_normalized = normalized
             continue
 
-        is_moving = motion_score > threshold
+        if len(previous_normalized) != len(normalized):
+            print(
+                "Skipping frame because CSI vector length changed.",
+                file=sys.stderr,
+            )
+
+            previous_normalized = normalized
+            score_buffer.clear()
+            temporal_filter.reset()
+            high_count = 0
+            low_count = 0
+            is_moving = False
+            continue
+        frame_difference = np.abs(
+            normalized - previous_normalized
+        )
+
+        if int(np.max(selected_indices)) >= len(frame_difference):
+            raise ValueError(
+                "A selected CSI index is outside "
+                "the frame-difference vector."
+            )
+
+        selected_difference = frame_difference[
+            selected_indices
+        ]
+
+        frame_score = float(
+            np.mean(selected_difference)
+        )
+        score_buffer.append(frame_score)
+
+        previous_normalized = normalized
+
+        motion_score = float(np.mean(score_buffer))
+
+        above_threshold = motion_score > args.threshold
+
+        if above_threshold:
+            high_count += 1
+            low_count = 0
+        else:
+            low_count += 1
+            high_count = 0
+
+        if not is_moving and high_count >= args.start_count:
+            is_moving = True
+
+            print(
+                f"EVENT=HAREKET "
+                f"ts_us={message.get('ts_us', '')} "
+                f"node_id={message.get('node_id', '')} "
+                f"motion_score={motion_score:.4f} "
+                f"threshold={args.threshold:.4f}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        elif is_moving and low_count >= args.stop_count:
+            is_moving = False
+
+            print(
+                f"EVENT=STILL "
+                f"ts_us={message.get('ts_us', '')} "
+                f"node_id={message.get('node_id', '')} "
+                f"motion_score={motion_score:.4f} "
+                f"threshold={args.threshold:.4f}",
+                file=sys.stderr,
+                flush=True,
+            )
+
         status = "HAREKET" if is_moving else "STILL"
 
         print(
             f"ts_us={message.get('ts_us', '')} "
             f"node_id={message.get('node_id', '')} "
             f"rssi={message.get('rssi', '')} "
-            f"motion_score={motion_score:.2f}",
-            f"threshold={threshold:.2f} "
+            f"motion_score={motion_score:.4f} "
+            f"threshold={args.threshold:.4f} "
             f"status={status}",
             flush=True,
         )
-
-        if is_moving and not was_moving:
-            print(
-                f"EVENT=HAREKET "
-                f"ts_us={message.get('ts_us', '')} "
-                f"node_id={message.get('node_id', '')} "
-                f"motion_score={motion_score:.2f} "
-                f"threshold={threshold:.2f}",
-                file=sys.stderr,
-                flush=True,
-            )
-
-        was_moving = is_moving
 
 
 if __name__ == "__main__":
