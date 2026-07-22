@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_timer.h"
+#include "esp_system.h"
 
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
@@ -25,6 +26,8 @@ static volatile uint32_t s_csi_frames_received = 0;
 static volatile uint32_t s_csi_frames_queued = 0;
 static volatile uint32_t s_csi_frames_sent = 0;
 static volatile uint32_t s_csi_frames_dropped = 0;
+static volatile uint32_t s_udp_packets_received = 0;
+static volatile int8_t s_last_rssi = 0;
 
 
 static int s_collector_sock = -1;
@@ -44,6 +47,65 @@ typedef struct {
     uint16_t len;
     int8_t csi[VSENSE_MAX_CSI_LEN];
 } vsense_csi_frame_t;
+
+
+static void vsense_rx_health_task(void *arg)
+{
+    (void)arg;
+
+    ESP_LOGI(TAG, "RX health telemetry task started.");
+
+    while (true) {
+        uint64_t uptime_ms = (uint64_t)(
+            esp_timer_get_time() / 1000
+        );
+
+        uint32_t free_heap = esp_get_free_heap_size();
+        uint32_t minimum_free_heap =
+            esp_get_minimum_free_heap_size();
+
+        UBaseType_t queue_depth = 0;
+
+        if (s_csi_queue != NULL) {
+            queue_depth = uxQueueMessagesWaiting(
+                s_csi_queue
+            );
+        }
+
+        ESP_LOGI(
+            TAG,
+            "HEALTH "
+            "node_id=%s "
+            "uptime_ms=%llu "
+            "free_heap=%lu "
+            "minimum_free_heap=%lu "
+            "udp_packets=%lu "
+            "csi_received=%lu "
+            "csi_queued=%lu "
+            "csi_sent=%lu "
+            "csi_dropped=%lu "
+            "queue_depth=%u "
+            "last_rssi=%d",
+            VSENSE_NODE_ID,
+            (unsigned long long)uptime_ms,
+            (unsigned long)free_heap,
+            (unsigned long)minimum_free_heap,
+            (unsigned long)s_udp_packets_received,
+            (unsigned long)s_csi_frames_received,
+            (unsigned long)s_csi_frames_queued,
+            (unsigned long)s_csi_frames_sent,
+            (unsigned long)s_csi_frames_dropped,
+            (unsigned int)queue_depth,
+            (int)s_last_rssi
+        );
+
+        vTaskDelay(
+            pdMS_TO_TICKS(
+                VSENSE_HEALTH_INTERVAL_MS
+            )
+        );
+    }
+}
 
 static void vsense_rx_collector_init(void)
 {
@@ -211,6 +273,7 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
     
 
     s_csi_frames_received++;
+    s_last_rssi = data->rx_ctrl.rssi;
 
     if ((s_csi_frames_received % VSENSE_RAW_SEND_EVERY_N_FRAMES) != 0) {
         return;
@@ -331,6 +394,23 @@ static void vsense_rx_udp_task(void *arg)
         return;
     }
 
+
+    BaseType_t health_task_created = xTaskCreate(
+        vsense_rx_health_task,
+        "rx_health",
+        3072,
+        NULL,
+        3,
+        NULL
+    );
+
+    if (health_task_created != pdPASS) {
+        ESP_LOGW(
+            TAG,
+            "Failed to create RX health telemetry task."
+        );
+    }
+
     vsense_rx_csi_init();
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
@@ -357,7 +437,6 @@ static void vsense_rx_udp_task(void *arg)
 
     ESP_LOGI(TAG, "RX UDP server listening on port %d.", VSENSE_RX_UDP_PORT);
 
-    uint32_t packets_received = 0;
     uint32_t last_logged_count = 0;
 
     while (1) {
@@ -381,17 +460,17 @@ static void vsense_rx_udp_task(void *arg)
         }
 
         rx_buffer[len] = '\0';
-        packets_received++;
+        s_udp_packets_received++;
 
-        if ((packets_received - last_logged_count) >= 100) {
+        if ((s_udp_packets_received - last_logged_count) >= 100) {
             ESP_LOGI(
                 TAG,
                 "RX packets_received=%lu last_payload=\"%s\"",
-                (unsigned long)packets_received,
+                (unsigned long)s_udp_packets_received,
                 rx_buffer
             );
 
-            last_logged_count = packets_received;
+            last_logged_count = s_udp_packets_received;
         }
     }
 }
