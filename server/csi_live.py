@@ -184,6 +184,22 @@ def load_selected_indices(file_path):
 
     return indices
 
+def create_node_state(args):
+    return {
+        "temporal_filter": TemporalCSIFilter(
+            history_size=args.filter_history,
+            hampel_window=args.hampel_window,
+            hampel_n_sigma=args.hampel_n_sigma,
+            savgol_window=args.savgol_window,
+            savgol_polyorder=args.savgol_polyorder,
+        ),
+        "score_buffer": deque(maxlen=args.window_size),
+        "previous_normalized": None,
+        "is_moving": False,
+        "high_count": 0,
+        "low_count": 0,
+    }
+
 def main():
     args = parse_args()
 
@@ -191,34 +207,24 @@ def main():
         args.selected_subcarriers
     )
 
-    temporal_filter = TemporalCSIFilter(
-        history_size=args.filter_history,
-        hampel_window=args.hampel_window,
-        hampel_n_sigma=args.hampel_n_sigma,
-        savgol_window=args.savgol_window,
-        savgol_polyorder=args.savgol_polyorder,
-    )
+    # Her node kendi state'ine sahip olacak.
+    node_states = {}
 
     print(
         f"Loaded {len(selected_indices)} selected CSI indices.",
         file=sys.stderr,
     )
 
-    score_buffer = deque(maxlen=args.window_size)
-    previous_normalized = None
-
-    is_moving = False
-    high_count = 0
-    low_count = 0
-
     print(
         "Reading CSI JSON lines from stdin. Press Ctrl+C to stop.",
         file=sys.stderr,
     )
+
     print(
         f"Motion threshold: {args.threshold:.3f}",
         file=sys.stderr,
     )
+
     print(
         f"Window size: {args.window_size}",
         file=sys.stderr,
@@ -232,13 +238,41 @@ def main():
 
         try:
             message = json.loads(line)
-            amplitude = message_to_amplitude(message)
+
+            # Mesajın hangi RX node'dan geldiğini bul.
+            node_id = message.get(
+                "node_id",
+                "unknown",
+            )
+
+            # Bu node'u ilk defa görüyorsak
+            # ona özel state oluştur.
+            if node_id not in node_states:
+                node_states[node_id] = create_node_state(
+                    args
+                )
+
+                print(
+                    f"New CSI node detected: {node_id}",
+                    file=sys.stderr,
+                )
+
+            # Sadece bu node'un state'ini kullan.
+            state = node_states[node_id]
+
+            amplitude = message_to_amplitude(
+                message
+            )
+
             cleaned = clean_amplitude(
                 amplitude,
                 args.edge_trim,
             )
 
-            temporally_filtered = temporal_filter.process(
+            # Her node'un kendi temporal filter'ı var.
+            temporally_filtered = state[
+                "temporal_filter"
+            ].process(
                 cleaned
             )
 
@@ -260,32 +294,45 @@ def main():
             )
             continue
 
+        previous_normalized = state[
+            "previous_normalized"
+        ]
+
         if previous_normalized is None:
-            previous_normalized = normalized
+            state["previous_normalized"] = normalized
             continue
 
         if len(previous_normalized) != len(normalized):
             print(
-                "Skipping frame because CSI vector length changed.",
+                f"Skipping frame for node {node_id} "
+                "because CSI vector length changed.",
                 file=sys.stderr,
             )
 
-            previous_normalized = normalized
-            score_buffer.clear()
-            temporal_filter.reset()
-            high_count = 0
-            low_count = 0
-            is_moving = False
+            state["previous_normalized"] = normalized
+            state["score_buffer"].clear()
+            state["temporal_filter"].reset()
+
+            state["high_count"] = 0
+            state["low_count"] = 0
+            state["is_moving"] = False
+
             continue
+
         frame_difference = np.abs(
             normalized - previous_normalized
         )
 
-        if int(np.max(selected_indices)) >= len(frame_difference):
-            raise ValueError(
-                "A selected CSI index is outside "
-                "the frame-difference vector."
+        if int(np.max(selected_indices)) >= len(
+            frame_difference
+        ):
+            print(
+                f"Skipping frame for node {node_id}: "
+                "selected CSI index is outside "
+                "the frame-difference vector.",
+                file=sys.stderr,
             )
+            continue
 
         selected_difference = frame_difference[
             selected_indices
@@ -294,52 +341,73 @@ def main():
         frame_score = float(
             np.mean(selected_difference)
         )
-        score_buffer.append(frame_score)
 
-        previous_normalized = normalized
+        # Sadece bu node'un score buffer'ına ekle.
+        state["score_buffer"].append(
+            frame_score
+        )
 
-        motion_score = float(np.mean(score_buffer))
+        state["previous_normalized"] = normalized
 
-        above_threshold = motion_score > args.threshold
+        motion_score = float(
+            np.mean(
+                state["score_buffer"]
+            )
+        )
+
+        above_threshold = (
+            motion_score > args.threshold
+        )
 
         if above_threshold:
-            high_count += 1
-            low_count = 0
-        else:
-            low_count += 1
-            high_count = 0
+            state["high_count"] += 1
+            state["low_count"] = 0
 
-        if not is_moving and high_count >= args.start_count:
-            is_moving = True
+        else:
+            state["low_count"] += 1
+            state["high_count"] = 0
+
+        if (
+            not state["is_moving"]
+            and state["high_count"] >= args.start_count
+        ):
+            state["is_moving"] = True
 
             print(
                 f"EVENT=HAREKET "
                 f"ts_us={message.get('ts_us', '')} "
-                f"node_id={message.get('node_id', '')} "
+                f"node_id={node_id} "
                 f"motion_score={motion_score:.4f} "
                 f"threshold={args.threshold:.4f}",
                 file=sys.stderr,
                 flush=True,
             )
 
-        elif is_moving and low_count >= args.stop_count:
-            is_moving = False
+        elif (
+            state["is_moving"]
+            and state["low_count"] >= args.stop_count
+        ):
+            state["is_moving"] = False
 
             print(
                 f"EVENT=STILL "
                 f"ts_us={message.get('ts_us', '')} "
-                f"node_id={message.get('node_id', '')} "
+                f"node_id={node_id} "
                 f"motion_score={motion_score:.4f} "
                 f"threshold={args.threshold:.4f}",
                 file=sys.stderr,
                 flush=True,
             )
 
-        status = "HAREKET" if is_moving else "STILL"
+        status = (
+            "HAREKET"
+            if state["is_moving"]
+            else "STILL"
+        )
 
         print(
             f"ts_us={message.get('ts_us', '')} "
-            f"node_id={message.get('node_id', '')} "
+            f"node_id={node_id} "
             f"rssi={message.get('rssi', '')} "
             f"motion_score={motion_score:.4f} "
             f"threshold={args.threshold:.4f} "
