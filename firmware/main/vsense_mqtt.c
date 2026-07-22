@@ -123,6 +123,10 @@ bool vsense_mqtt_publish_health(
     uint32_t csi_received,
     uint32_t csi_queued,
     uint32_t csi_sent,
+    uint32_t udp_csi_sent,
+    uint32_t udp_csi_failed,
+    uint32_t mqtt_csi_published,
+    uint32_t mqtt_csi_failed,
     uint32_t csi_dropped,
     uint32_t queue_depth,
     int8_t last_rssi
@@ -170,6 +174,10 @@ bool vsense_mqtt_publish_health(
         "\"csi_received\":%lu,"
         "\"csi_queued\":%lu,"
         "\"csi_sent\":%lu,"
+        "\"udp_csi_sent\":%lu,"
+        "\"udp_csi_failed\":%lu,"
+        "\"mqtt_csi_published\":%lu,"
+        "\"mqtt_csi_failed\":%lu,"
         "\"csi_dropped\":%lu,"
         "\"queue_depth\":%lu,"
         "\"last_rssi\":%d"
@@ -182,6 +190,10 @@ bool vsense_mqtt_publish_health(
         (unsigned long)csi_received,
         (unsigned long)csi_queued,
         (unsigned long)csi_sent,
+        (unsigned long)udp_csi_sent,
+        (unsigned long)udp_csi_failed,
+        (unsigned long)mqtt_csi_published,
+        (unsigned long)mqtt_csi_failed,
         (unsigned long)csi_dropped,
         (unsigned long)queue_depth,
         (int)last_rssi

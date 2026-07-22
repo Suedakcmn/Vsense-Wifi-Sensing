@@ -17,6 +17,10 @@ bool vsense_mqtt_publish_health(
     uint32_t csi_received,
     uint32_t csi_queued,
     uint32_t csi_sent,
+    uint32_t udp_csi_sent,
+    uint32_t udp_csi_failed,
+    uint32_t mqtt_csi_published,
+    uint32_t mqtt_csi_failed,
     uint32_t csi_dropped,
     uint32_t queue_depth,
     int8_t last_rssi
