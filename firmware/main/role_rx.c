@@ -315,11 +315,20 @@ static void vsense_csi_sender_task(void *arg)
     }
 }
 
+static const uint8_t s_tx_mac[6] = {
+    0xE0, 0x72, 0xA1, 0xF3, 0xBF, 0xF0
+};
+
 static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
 {
     (void)ctx;
 
     if (data == NULL || data->buf == NULL || s_csi_queue == NULL) {
+        return;
+    }
+
+    // Yalnızca VSense TX kartından gelen CSI framelerini işle.
+    if (memcmp(data->mac, s_tx_mac, sizeof(s_tx_mac)) != 0) {
         return;
     }
 
