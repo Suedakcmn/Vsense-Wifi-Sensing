@@ -59,6 +59,8 @@ void vsense_mqtt_start(void)
 
     const esp_mqtt_client_config_t mqtt_config = {
         .broker.address.uri = VSENSE_MQTT_BROKER_URI,
+        .buffer.size = 2048,
+        .buffer.out_size = 4096,
     };
 
     s_mqtt_client = esp_mqtt_client_init(
@@ -216,6 +218,55 @@ bool vsense_mqtt_publish_health(
         topic,
         message_id
     );
+
+    return true;
+}
+
+bool vsense_mqtt_publish_csi(
+    const char *payload,
+    size_t payload_length
+)
+{
+    if (payload == NULL || payload_length == 0) {
+        return false;
+    }
+
+    if (
+        s_mqtt_client == NULL ||
+        !s_mqtt_connected
+    ) {
+        return false;
+    }
+
+    char topic[64];
+
+    int topic_length = snprintf(
+        topic,
+        sizeof(topic),
+        "vsense/%s/csi",
+        VSENSE_NODE_ID
+    );
+
+    if (
+        topic_length < 0 ||
+        topic_length >= (int)sizeof(topic)
+    ) {
+        ESP_LOGE(TAG, "CSI MQTT topic is too long.");
+        return false;
+    }
+
+    int message_id = esp_mqtt_client_publish(
+        s_mqtt_client,
+        topic,
+        payload,
+        (int)payload_length,
+        0,
+        0
+    );
+
+    if (message_id < 0) {
+        return false;
+    }
 
     return true;
 }

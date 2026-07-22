@@ -211,6 +211,9 @@ static void vsense_csi_sender_task(void *arg)
     vsense_csi_frame_t frame;
     char json_message[2048];
 
+    uint32_t mqtt_published = 0;
+    uint32_t mqtt_failed = 0;
+
     ESP_LOGI(TAG, "Raw CSI sender task started.");
 
     while (true) {
@@ -261,15 +264,29 @@ static void vsense_csi_sender_task(void *arg)
             continue;
         }
 
+        if (
+            vsense_mqtt_publish_csi(
+                json_message,
+                (size_t)message_len
+            )
+        ) {
+            mqtt_published++;
+        } else {
+            mqtt_failed++;
+        }
+
         s_csi_frames_sent++;
 
         if ((s_csi_frames_sent % 100) == 0) {
             ESP_LOGI(
                 TAG,
-                "Raw CSI sent=%lu queued=%lu dropped=%lu last_len=%u",
+                "Raw CSI sent=%lu queued=%lu dropped=%lu "
+                "mqtt_published=%lu mqtt_failed=%lu last_len=%u",
                 (unsigned long)s_csi_frames_sent,
                 (unsigned long)s_csi_frames_queued,
                 (unsigned long)s_csi_frames_dropped,
+                (unsigned long)mqtt_published,
+                (unsigned long)mqtt_failed,
                 frame.len
             );
         }
