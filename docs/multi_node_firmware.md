@@ -55,7 +55,10 @@ Use `VSense node configuration` to review:
 - Wi-Fi channel
 - collector IP and UDP port
 - MQTT broker URI
+- MQTT keepalive interval
 - TX MAC filter
+- CSI maximum buffer length
+- CSI forwarding interval
 - TX target IP addresses
 
 Repeat with `build-rx-02` and `sdkconfig.defaults.rx_02` for RX-02.
@@ -143,8 +146,9 @@ Node ID: rx_01
 Configured role: RX
 Wi-Fi connected.
 IP address: 192.168.128.x
-CSI TX MAC filter enabled: AA:BB:CC:DD:EE:FF
+CSI TX MAC filter is disabled.
 CSI collection enabled.
+CSI forwarding every 1 accepted frame(s); max_len=384 queue=64.
 ```
 
 TX startup:
@@ -171,10 +175,50 @@ TX target=rx_02 cycles=100 sent=100 failed=0
 4. Power TX-01 after both RX targets have been verified.
 5. Confirm TX delivery counters increase for both targets.
 6. Confirm CSI and health messages arrive under both node IDs.
-7. Confirm each RX reports an acceptable CSI packet rate.
+7. Confirm each RX reports `csi_pps` near the TX target rate and
+   `csi_forwarded_pps` near `csi_pps`.
 8. Disconnect RX-02 and verify its status becomes offline within five seconds.
 9. Reconnect RX-02 and verify its status returns online.
-10. Record packet rate, failures, drops, RSSI, channel, and CSI length.
+10. Verify `csi_dropped=0`, `csi_oversized=0`, transport failure counters do
+    not increase, and queue depth returns to zero.
+11. Record packet rate, failures, drops, RSSI, channel, and CSI length.
+
+The five-second offline result comes from `mqtt_collector.py`'s traffic
+watchdog. It is independent of the 30-second MQTT keepalive.
+
+## TX MAC Filter Verification
+
+The RX profiles keep the TX MAC filter disabled by default. This prevents an
+incorrect or replaced TX MAC from silently stopping collection.
+
+1. Boot once with the filter disabled and confirm CSI arrives.
+2. Verify the TX station MAC from the hardware/router rather than guessing.
+3. Enable the filter only for controlled sensing recordings.
+4. Flash with a deliberately incorrect MAC once and confirm `csi_filtered`
+   rises and a rate-limited `TX MAC mismatch` warning is printed.
+5. Restore the verified MAC and confirm `csi_received` and `csi_pps` recover.
+
+When disabled, unrelated Wi-Fi traffic can enter the raw CSI path. Keep the
+environment controlled or enable the verified filter for final experiments.
+
+## Full-Rate Verification
+
+The default forwarding interval is 1, meaning every accepted CSI frame is
+queued. Before LD2450 integration, run a two-to-three-minute physical test with
+both RX nodes:
+
+```bash
+python server/mqtt_collector.py --host 127.0.0.1 \
+  --record \
+    data/sessions/20260729_150000_office_rate_verify_r01_csi.jsonl \
+  > /dev/null
+```
+
+Accept `N=1` only when each RX remains near the TX target rate, frame counts
+advance by one, both transport failure counters remain stable, and
+`csi_dropped` stays zero. If the full dual-transport load is not stable, choose
+the smallest measured value greater than 1 and document the reason and observed
+rate here before LD2450 testing.
 
 Do not claim the multi-node task complete until both RX nodes receive CSI
 simultaneously and the offline test passes.

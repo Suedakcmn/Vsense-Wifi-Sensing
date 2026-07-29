@@ -19,8 +19,10 @@ mosquitto -v
 
 ```bash
 python server/mqtt_collector.py --host 127.0.0.1 \
-  --record data/sessions/week4_multi_node.jsonl \
-  | python server/csi_live.py --event-log data/events/week4_events.jsonl
+  --record data/sessions/20260729_143000_office_multi_rx_r01_csi.jsonl \
+  | python server/csi_live.py \
+      --event-log data/events/20260729_143000_office_multi_rx_r01_events.jsonl \
+      --session-id 20260729_143000_office_multi_rx_r01
 ```
 
 For the multi-node graph, feed the same collector stream to the plotter:
@@ -39,6 +41,15 @@ The output contains a separate motion state per `node_id` and lines such as
 make disconnects visible immediately; the collector watchdog guarantees the
 transition no later than `--offline-timeout` (default 5 seconds) after the last
 CSI/health/status message.
+
+Firmware and collector MQTT keepalive defaults are 30 seconds. Fast node
+liveness is provided by CSI/health traffic plus the collector watchdog, not by
+an unusually short MQTT keepalive.
+
+Normalized MQTT records and valid UDP recordings include `recorded_at` and
+`collector_ts_us`. Use `collector_ts_us` as the common Mac clock when aligning
+multiple RX streams or future LD2450 radar data. Firmware `ts_us` remains useful
+for device-local interval and jitter analysis.
 
 ## Test with two virtual receivers
 
