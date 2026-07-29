@@ -1,4 +1,5 @@
 #include "role_rx.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -23,11 +24,16 @@
 
 static const char *TAG = "VSENSE_RX";
 static QueueHandle_t s_csi_queue = NULL;
+static volatile uint32_t s_csi_callbacks_total = 0;
+static volatile uint32_t s_csi_frames_filtered = 0;
 static volatile uint32_t s_csi_frames_received = 0;
 static volatile uint32_t s_csi_frames_queued = 0;
 static volatile uint32_t s_csi_frames_sent = 0;
 static volatile uint32_t s_csi_frames_dropped = 0;
 static volatile uint32_t s_csi_frames_processed = 0;
+static volatile uint8_t s_last_csi_source_mac[6] = {0};
+static volatile uint8_t s_last_csi_channel = 0;
+static volatile int8_t s_last_csi_callback_rssi = 0;
 
 static volatile uint32_t s_udp_csi_sent = 0;
 static volatile uint32_t s_udp_csi_failed = 0;
@@ -89,6 +95,8 @@ static void vsense_rx_health_task(void *arg)
             "free_heap=%lu "
             "minimum_free_heap=%lu "
             "udp_packets=%lu "
+            "csi_callbacks=%lu "
+            "csi_filtered=%lu "
             "csi_received=%lu "
             "csi_queued=%lu "
             "csi_sent=%lu "
@@ -98,12 +106,17 @@ static void vsense_rx_health_task(void *arg)
             "mqtt_csi_failed=%lu "
             "csi_dropped=%lu "
             "queue_depth=%u "
+            "last_csi_source=%02x:%02x:%02x:%02x:%02x:%02x "
+            "last_csi_channel=%u "
+            "last_csi_callback_rssi=%d "
             "last_rssi=%d",
             VSENSE_NODE_ID,
             (unsigned long long)uptime_ms,
             (unsigned long)free_heap,
             (unsigned long)minimum_free_heap,
             (unsigned long)s_udp_packets_received,
+            (unsigned long)s_csi_callbacks_total,
+            (unsigned long)s_csi_frames_filtered,
             (unsigned long)s_csi_frames_received,
             (unsigned long)s_csi_frames_queued,
             (unsigned long)s_csi_frames_sent,
@@ -113,6 +126,14 @@ static void vsense_rx_health_task(void *arg)
             (unsigned long)s_mqtt_csi_failed,
             (unsigned long)s_csi_frames_dropped,
             (unsigned int)queue_depth,
+            (unsigned int)s_last_csi_source_mac[0],
+            (unsigned int)s_last_csi_source_mac[1],
+            (unsigned int)s_last_csi_source_mac[2],
+            (unsigned int)s_last_csi_source_mac[3],
+            (unsigned int)s_last_csi_source_mac[4],
+            (unsigned int)s_last_csi_source_mac[5],
+            (unsigned int)s_last_csi_channel,
+            (int)s_last_csi_callback_rssi,
             (int)s_last_rssi
         );
 
@@ -315,9 +336,65 @@ static void vsense_csi_sender_task(void *arg)
     }
 }
 
-static const uint8_t s_tx_mac[6] = {
-    0xE0, 0x72, 0xA1, 0xF3, 0xBF, 0xF0
-};
+static uint8_t s_tx_mac[6];
+
+static bool vsense_rx_tx_mac_filter_init(void)
+{
+#if VSENSE_TX_MAC_FILTER_ENABLED
+    unsigned int parsed_mac[6];
+    char trailing_character;
+
+    int parsed_fields = sscanf(
+        VSENSE_TX_MAC,
+        "%2x:%2x:%2x:%2x:%2x:%2x%c",
+        &parsed_mac[0],
+        &parsed_mac[1],
+        &parsed_mac[2],
+        &parsed_mac[3],
+        &parsed_mac[4],
+        &parsed_mac[5],
+        &trailing_character
+    );
+
+    if (
+        parsed_fields != 6 ||
+        strlen(VSENSE_TX_MAC) != 17
+    ) {
+        ESP_LOGE(
+            TAG,
+            "Invalid TX MAC configuration: %s",
+            VSENSE_TX_MAC
+        );
+        return false;
+    }
+
+    for (size_t i = 0; i < sizeof(s_tx_mac); i++) {
+        if (parsed_mac[i] > UINT8_MAX) {
+            ESP_LOGE(
+                TAG,
+                "TX MAC byte is out of range: %s",
+                VSENSE_TX_MAC
+            );
+            return false;
+        }
+
+        s_tx_mac[i] = (uint8_t)parsed_mac[i];
+    }
+
+    ESP_LOGI(
+        TAG,
+        "CSI TX MAC filter enabled: %s",
+        VSENSE_TX_MAC
+    );
+#else
+    ESP_LOGW(
+        TAG,
+        "CSI TX MAC filter is disabled."
+    );
+#endif
+
+    return true;
+}
 
 static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
 {
@@ -327,12 +404,17 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
         return;
     }
 
-    // Yalnızca VSense TX kartından gelen CSI framelerini işle.
+    s_csi_callbacks_total++;
+    memcpy((void *)s_last_csi_source_mac, data->mac, sizeof(s_last_csi_source_mac));
+    s_last_csi_channel = data->rx_ctrl.channel;
+    s_last_csi_callback_rssi = data->rx_ctrl.rssi;
+
+#if VSENSE_TX_MAC_FILTER_ENABLED
     if (memcmp(data->mac, s_tx_mac, sizeof(s_tx_mac)) != 0) {
+        s_csi_frames_filtered++;
         return;
     }
-
-    
+#endif
 
     s_csi_frames_received++;
     s_last_rssi = data->rx_ctrl.rssi;
@@ -378,6 +460,14 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
 
 static void vsense_rx_csi_init(void)
 {
+    if (!vsense_rx_tx_mac_filter_init()) {
+        ESP_LOGE(
+            TAG,
+            "CSI disabled because the TX MAC filter is invalid."
+        );
+        return;
+    }
+
     wifi_csi_config_t csi_config = {
         .lltf_en = true,
         .htltf_en = true,

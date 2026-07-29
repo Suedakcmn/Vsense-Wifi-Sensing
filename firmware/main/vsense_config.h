@@ -1,42 +1,47 @@
 #ifndef VSENSE_CONFIG_H
 #define VSENSE_CONFIG_H
 
-/*
- * VSense firmware configuration.
- *
- * This file is intentionally simple for Week 1.
- * Later, these values can move to menuconfig/Kconfig or sdkconfig.defaults.
- */
+#include "sdkconfig.h"
 
-#define VSENSE_NODE_ID              "node_01"
+#define VSENSE_NODE_ID              CONFIG_VSENSE_NODE_ID
 
-/*
- * Select node role:
- * - "TX": transmitter node, will send Wi-Fi packets
- * - "RX": receiver node, will collect CSI
- */
+#if CONFIG_VSENSE_NODE_ROLE_TX
+#define VSENSE_NODE_ROLE            "TX"
+#elif CONFIG_VSENSE_NODE_ROLE_RX
 #define VSENSE_NODE_ROLE            "RX"
+#else
+#error "A VSense node role must be selected."
+#endif
 
-#define VSENSE_WIFI_CHANNEL         6
-#define VSENSE_PACKET_RATE_HZ       100
-#define VSENSE_HEALTH_INTERVAL_MS   5000
-#define VSENSE_WIFI_SSID            "change me"
-#define VSENSE_WIFI_PASSWORD        "change me"
-#define VSENSE_RX_UDP_PORT          3333
-#define VSENSE_RX_IP                "192.168.128.35"
-#define VSENSE_TX_TARGET_PORT       3333
+#define VSENSE_WIFI_CHANNEL         CONFIG_VSENSE_WIFI_CHANNEL
+#define VSENSE_WIFI_BSSID_LOCK_ENABLED \
+    CONFIG_VSENSE_WIFI_BSSID_LOCK_ENABLED
+#if CONFIG_VSENSE_WIFI_BSSID_LOCK_ENABLED
+#define VSENSE_WIFI_BSSID           CONFIG_VSENSE_WIFI_BSSID
+#endif
+#define VSENSE_PACKET_RATE_HZ       CONFIG_VSENSE_PACKET_RATE_HZ
+#define VSENSE_HEALTH_INTERVAL_MS   CONFIG_VSENSE_HEALTH_INTERVAL_MS
+#define VSENSE_WIFI_SSID            CONFIG_VSENSE_WIFI_SSID
+#define VSENSE_WIFI_PASSWORD        CONFIG_VSENSE_WIFI_PASSWORD
 
-#define VSENSE_COLLECTOR_IP         "192.168.128.96"
-#define VSENSE_COLLECTOR_UDP_PORT   4444
+#define VSENSE_RX_UDP_PORT          CONFIG_VSENSE_RX_UDP_PORT
+#define VSENSE_RX_01_IP             CONFIG_VSENSE_RX_01_IP
+#define VSENSE_RX_02_ENABLED        CONFIG_VSENSE_RX_02_ENABLED
+#if CONFIG_VSENSE_RX_02_ENABLED
+#define VSENSE_RX_02_IP             CONFIG_VSENSE_RX_02_IP
+#endif
+#define VSENSE_TX_TARGET_PORT       CONFIG_VSENSE_TX_TARGET_PORT
 
-#define VSENSE_MQTT_BROKER_URI "mqtt://192.168.128.96"
-#define VSENSE_MQTT_TOPIC_CSI       "vsense/node_01/csi"
-#define VSENSE_MQTT_TOPIC_HEALTH    "vsense/node_01/health"
+#define VSENSE_TX_MAC_FILTER_ENABLED \
+    CONFIG_VSENSE_TX_MAC_FILTER_ENABLED
+#if CONFIG_VSENSE_TX_MAC_FILTER_ENABLED
+#define VSENSE_TX_MAC               CONFIG_VSENSE_TX_MAC
+#endif
 
-/*
- * CSI buffer size placeholder.
- * Real value will be adjusted after testing with ESP32-S3 CSI output.
- */
-#define VSENSE_CSI_BUFFER_MAX_LEN   384
+#define VSENSE_COLLECTOR_IP         CONFIG_VSENSE_COLLECTOR_IP
+#define VSENSE_COLLECTOR_UDP_PORT   CONFIG_VSENSE_COLLECTOR_UDP_PORT
+
+#define VSENSE_MQTT_BROKER_URI      CONFIG_VSENSE_MQTT_BROKER_URI
+#define VSENSE_CSI_BUFFER_MAX_LEN   CONFIG_VSENSE_CSI_BUFFER_MAX_LEN
 
 #endif /* VSENSE_CONFIG_H */
