@@ -2,7 +2,8 @@ import argparse
 import json
 import socket
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
 
@@ -44,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--required-len",
         type=int,
-        choices=(128, 256),
+        choices=(128, 256, 384),
         help="Ignore CSI frames whose length does not match this value.",
     )
 
@@ -137,13 +138,17 @@ def main() -> None:
     accepted_count = 0
     invalid_count = 0
     filtered_count = 0
+    last_rate_time = time.monotonic()
+    last_rate_accepted = 0
+    accepted_pps = 0.0
 
     try:
         while True:
             data, addr = sock.recvfrom(BUFFER_SIZE)
             packet_count += 1
 
-            now = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            received_at = datetime.now(timezone.utc)
+            now = received_at.strftime("%H:%M:%S.%f")[:-3]
             text = data.decode("utf-8", errors="replace")
 
             try:
@@ -179,6 +184,20 @@ def main() -> None:
                 continue
 
             accepted_count += 1
+            payload["recorded_at"] = received_at.isoformat()
+            payload["collector_ts_us"] = time.time_ns() // 1_000
+
+            rate_now = time.monotonic()
+            rate_elapsed = rate_now - last_rate_time
+            rate_updated = rate_elapsed >= 1.0
+
+            if rate_updated:
+                accepted_pps = (
+                    accepted_count - last_rate_accepted
+                ) / rate_elapsed
+                last_rate_time = rate_now
+                last_rate_accepted = accepted_count
+
             json_line = json.dumps(payload, separators=(",", ":"))
 
             if record_file is not None:
@@ -187,6 +206,16 @@ def main() -> None:
 
             if args.json_only:
                 print(json_line, flush=True)
+
+                if rate_updated:
+                    print(
+                        f"UDP health accepted_pps={accepted_pps:.2f} "
+                        f"accepted={accepted_count} "
+                        f"invalid={invalid_count} "
+                        f"filtered={filtered_count}",
+                        file=status_stream,
+                        flush=True,
+                    )
                 continue
 
             if accepted_count % args.print_every == 0:
@@ -198,6 +227,7 @@ def main() -> None:
                     f"accepted={accepted_count} "
                     f"invalid={invalid_count} "
                     f"filtered={filtered_count} "
+                    f"accepted_pps={accepted_pps:.2f} "
                     f"from={addr[0]}:{addr[1]} "
                     f"node={payload.get('node_id')} "
                     f"frame={payload.get('frame_count')} "

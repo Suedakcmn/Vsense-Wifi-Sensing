@@ -1,51 +1,59 @@
 # VSense Firmware Notes
 
-## Purpose
+## Current status
 
-This firmware skeleton is the first ESP-IDF base for the VSense project.
+VSense is an implemented ESP-IDF firmware, not a skeleton. It currently
+supports:
 
-The current version does not collect real CSI yet. It only creates a clean ESP-IDF project structure with TX/RX role stubs.
+- configurable TX and RX roles;
+- one TX sending approximately 100 UDP packets/s to one or two RX nodes;
+- real ESP32-S3 CSI collection;
+- configurable TX MAC filtering with mismatch diagnostics;
+- queued raw CSI JSON forwarding over both UDP and MQTT;
+- per-node MQTT online/offline state and health telemetry;
+- separate RX-01, RX-02, and TX-01 build profiles;
+- full-rate or explicitly decimated CSI forwarding.
 
-## Current structure
+See `firmware_design.md` for the architecture and
+`multi_node_firmware.md` for profile-specific build, flash, and test commands.
 
-- app_main.c: application entry point
-- vsense_config.h: temporary compile-time configuration
-- role_tx.c: transmitter role placeholder
-- role_rx.c: receiver/CSI role placeholder
+## Build summary
 
-## Build
+Source ESP-IDF, then use a separate build directory and generated sdkconfig for
+each node. For example:
 
-From the repository root:
-
+```bash
 cd firmware
-idfpy set-target esp32s3
-idfpy build
+source ~/esp/esp-idf/export.sh
 
-Expected output:
+idf.py -B build-rx-01 \
+  -D SDKCONFIG="$PWD/build-rx-01/sdkconfig" \
+  -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.rx_01' \
+  build
+```
 
-Project build complete
+Do not reuse one build directory across TX/RX profiles. Review Wi-Fi
+credentials, collector/broker addresses, RX target IPs, and the physical TX MAC
+before flashing.
 
-Expected binary:
+## Current hardening defaults
 
-firmware/build/vsense_node.bin
+- Wi-Fi power save: disabled.
+- TX MAC filter: disabled until explicitly verified and enabled.
+- Maximum CSI length: 384 bytes.
+- Forwarding interval: every accepted frame (`N=1`).
+- CSI queue length: 64.
+- MQTT keepalive: 30 seconds.
+- Health interval: 5 seconds.
 
-## Next firmware steps
+These are safe code defaults, not a substitute for hardware verification.
+Record the measured `csi_pps`, `csi_forwarded_pps`, queue depth, drops, transport
+failures, RSSI, channel, and CSI length for both RX nodes before deployment.
 
-1. Add Wi-Fi initialization.
-2. Add TX packet sender at around 100 Hz.
-3. Add RX CSI callback.
-4. Add UDP output to the Mac collector.
-5. Later add MQTT support and node health telemetry.
+## Historical pilot rate
 
-## References to study
-
-Useful reference repository:
-
-- StevenMHernandez/ESP32-CSI-Tool
-
-Useful files to understand:
-
-- active_sta/main/main.cc: station/TX-like behavior
-- active_ap/main/main.cc: AP/RX-like behavior
-- _components/csi_component.h: CSI callback and CSI metadata
-- _components/sockets_component.h: UDP packet sender logic
+The 27 July pilot deliberately forwarded every second accepted frame and
+measured approximately 47–55 forwarded frames/s. That test validates `N=2`,
+not the current `N=1` default. Run a new two-to-three-minute dual-RX test before
+claiming approximately 100 CSI frames/s or using the rate for LD2450
+synchronization.

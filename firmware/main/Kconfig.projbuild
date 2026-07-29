@@ -80,18 +80,22 @@ menu "VSense node configuration"
     menu "RX forwarding"
         config VSENSE_TX_MAC_FILTER_ENABLED
             bool "Filter CSI frames by TX MAC address"
-            default y
+            default n
             help
                 Accept CSI frames only from the configured VSense TX node.
-                Disable only for controlled diagnostics because unrelated
-                Wi-Fi traffic can otherwise enter the sensing pipeline.
+                Keep this disabled by default so a replaced or incorrectly
+                configured TX cannot stop CSI collection without an explicit
+                warning. Enable it for controlled sensing runs after verifying
+                the TX station MAC.
 
         config VSENSE_TX_MAC
-            string "TX MAC address"
+            string "Expected TX MAC address"
             default "28:84:85:46:49:10"
-            depends on VSENSE_TX_MAC_FILTER_ENABLED
             help
-                TX station MAC in six-byte colon-separated hexadecimal form.
+                Expected TX station MAC in six-byte colon-separated
+                hexadecimal form. The value is retained even while filtering
+                is disabled so it can be enabled without rebuilding the
+                profile from scratch.
 
         config VSENSE_RX_UDP_PORT
             int "RX UDP listen port"
@@ -111,6 +115,15 @@ menu "VSense node configuration"
             string "MQTT broker URI"
             default "mqtt://192.168.128.167"
 
+        config VSENSE_MQTT_KEEPALIVE_SECONDS
+            int "MQTT keepalive interval (seconds)"
+            range 15 60
+            default 30
+            help
+                MQTT transport keepalive. Node liveness on the collector is
+                detected independently from CSI/health traffic, so this value
+                does not need to be shortened for five-second UI timeouts.
+
         config VSENSE_HEALTH_INTERVAL_MS
             int "Health telemetry interval (ms)"
             range 1000 60000
@@ -118,8 +131,20 @@ menu "VSense node configuration"
 
         config VSENSE_CSI_BUFFER_MAX_LEN
             int "Maximum CSI buffer length"
-            range 64 4096
+            range 64 384
             default 384
+            help
+                Maximum raw CSI bytes stored per frame. The upper bound keeps
+                the JSON payload within the configured MQTT and UDP buffers.
+
+        config VSENSE_RAW_SEND_EVERY_N_FRAMES
+            int "Forward every Nth accepted CSI frame"
+            range 1 100
+            default 1
+            help
+                Use 1 to forward every accepted CSI frame. Values greater than
+                1 intentionally reduce the output sample rate and must be
+                selected from measured queue/drop and synchronization results.
     endmenu
 
 endmenu

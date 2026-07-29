@@ -2,123 +2,134 @@
 
 ## Purpose
 
-This document describes the planned firmware architecture for VSense ESP32-S3 nodes.
+This document describes the implemented ESP32-S3 firmware for VSense
+multi-node CSI sensing.
 
-The current firmware only contains a buildable skeleton. Future PRs will add Wi-Fi initialization, TX packet sending, RX CSI collection, UDP output, MQTT support, and node health telemetry.
+## Current architecture
 
-## Current Status
+The firmware supports one TX node and one or two RX nodes. Each physical node
+uses a separate build directory and Kconfig profile.
 
-The firmware currently includes:
+```text
+TX-01 -- UDP traffic --> RX-01 -- raw CSI --> UDP collector
+   \                   RX-01 -- raw CSI --> MQTT broker
+    \-> UDP traffic --> RX-02 -- raw CSI --> UDP collector
+                       RX-02 -- raw CSI --> MQTT broker
+```
 
-- ESP-IDF project structure
-- app_main.c entry point
-- vsense_config.h temporary configuration file
-- TX role stub
-- RX role stub
-- ESP32-S3 build support
+UDP and MQTT delivery have independent success/failure counters. They run from
+the same CSI sender task, so full-rate tests must verify queue depth and both
+transport paths together.
 
-The current firmware does not collect real CSI yet.
+## Configuration
 
-## Node Roles
+Project settings are declared in `main/Kconfig.projbuild` and exposed through
+`main/vsense_config.h`. Important settings include:
 
-VSense nodes can run in two main roles:
+- node ID and TX/RX role;
+- Wi-Fi SSID, channel, and optional AP BSSID lock;
+- TX packet rate and one/two RX target addresses;
+- optional expected TX MAC filter;
+- collector UDP address and MQTT broker;
+- MQTT keepalive and health interval;
+- maximum CSI length;
+- `VSENSE_RAW_SEND_EVERY_N_FRAMES`.
 
-- TX: transmitter node
-- RX: receiver / CSI collection node
+The TX MAC filter is disabled by default. Controlled production recordings may
+enable it after verifying the physical TX station MAC. Filtered frames are
+counted and rate-limited mismatch warnings include the last actual source MAC.
 
-The role is currently selected through VSENSE_NODE_ROLE in vsense_config.h.
+Wi-Fi power save is disabled after `esp_wifi_start()` to reduce CSI arrival
+jitter.
 
-## TX Role
+## TX role
 
-The TX node will generate Wi-Fi traffic so RX nodes can extract CSI.
+The TX connects as a Wi-Fi station and sends a small unicast UDP payload at
+`VSENSE_PACKET_RATE_HZ` to every enabled RX target. Each target has independent
+sent and failed counters. The default target rate is 100 Hz.
 
-Planned TX responsibilities:
+## RX role and CSI callback
 
-1. Initialize Wi-Fi.
-2. Use the configured Wi-Fi channel.
-3. Send packets at around VSENSE_PACKET_RATE_HZ.
-4. Prefer unicast transmission when RX address or IP is known.
-5. Track packet count.
-6. Report basic health information.
+The RX connects to Wi-Fi, starts MQTT, creates the collector UDP socket, then
+enables promiscuous mode and CSI collection.
 
-Target behavior:
+The CSI callback deliberately performs only bounded work:
 
-- Packet rate: around 100 Hz
-- Purpose: create stable Wi-Fi traffic for CSI measurements
-- Future config: target RX IP / MAC / channel / packet rate
+1. validate the callback data;
+2. update source/channel/RSSI diagnostics;
+3. apply the optional TX MAC filter;
+4. count accepted frames;
+5. apply the configured forwarding interval;
+6. reject and count frames larger than `VSENSE_CSI_BUFFER_MAX_LEN`;
+7. copy the frame into a FreeRTOS queue without waiting.
 
-## RX Role
+The queue length is 64. A separate sender task serializes queued CSI as JSON and
+attempts both UDP and MQTT delivery. A failure on one transport does not prevent
+the other attempt.
 
-The RX node will collect CSI from received Wi-Fi frames.
+## CSI length and transport buffers
 
-Planned RX responsibilities:
+`VSENSE_CSI_BUFFER_MAX_LEN` is the single firmware limit and defaults to 384
+bytes. The JSON buffer is derived from that value using the maximum text width
+of a signed `int8_t`. A compile-time assertion prevents the resulting JSON from
+exceeding the 4096-byte MQTT/UDP transport buffers.
 
-1. Initialize Wi-Fi.
-2. Configure the Wi-Fi channel.
-3. Enable CSI collection.
-4. Register a CSI callback.
-5. Extract metadata from each CSI frame:
-   - timestamp
-   - RSSI
-   - channel
-   - source MAC
-   - CSI length
-   - raw CSI buffer
-6. Forward CSI frames to the Mac collector.
-7. Later support MQTT publishing.
+Oversized CSI frames are dropped rather than silently truncated. The
+`csi_oversized` and `csi_dropped` health counters make this visible.
 
-## CSI Callback
+## Sampling and decimation
 
-The CSI callback is the function that will run automatically whenever a new CSI frame is available.
+`VSENSE_RAW_SEND_EVERY_N_FRAMES` controls intentional decimation:
 
-Expected callback flow:
+- `1`: forward every accepted CSI frame;
+- `2`: forward every second accepted frame;
+- `10`: forward every tenth accepted frame.
 
-1. ESP-IDF receives a Wi-Fi frame.
-2. CSI data becomes available.
-3. Registered CSI callback is called.
-4. Firmware extracts metadata and raw CSI bytes.
-5. Firmware packages the data.
-6. Firmware sends the packet to the collector.
+The default is 1. Any value greater than 1 must be supported by a recorded
+bandwidth/CPU/queue test and a synchronization rationale. The 27 July pilot used
+2 and measured roughly 47–55 forwarded frames/s. The current full-rate target
+must be verified on hardware with both RX nodes before LD2450 integration.
 
-## Transport Plan
+## Health telemetry
 
-### Version 0: UDP
+RX health is logged and published to `vsense/{node_id}/health`. It includes:
 
-The first real hardware version should use UDP because it is simple and fast.
+- cumulative callback, filtered, accepted, queued, sent, dropped, and
+  oversized counts;
+- UDP and MQTT success/failure counts;
+- current queue depth and heap diagnostics;
+- `csi_pps`, the accepted CSI rate during the latest health interval;
+- `csi_forwarded_pps`, the queue input rate after intentional decimation;
+- configured forwarding interval and latest RSSI.
 
-Planned flow:
+Node status is retained at `vsense/{node_id}/status`. Firmware MQTT keepalive
+defaults to 30 seconds. The platform collector independently marks a node
+offline after five seconds without CSI, health, or status traffic.
 
-RX ESP32-S3 -> UDP packet -> Mac collector
+## Timestamps and synchronization
 
-### Future: MQTT
+Firmware `ts_us` comes from `esp_timer_get_time()` and is device uptime. It is
+not directly comparable between RX nodes or with an LD2450 connected to the
+Mac.
 
-Later, firmware may publish CSI and health data to MQTT topics:
+Both MQTT and UDP collectors add:
 
-- vsense/{node_id}/csi
-- vsense/{node_id}/health
+- `recorded_at`: UTC receive time;
+- `collector_ts_us`: Unix epoch receive time in microseconds.
 
-## Health Telemetry
+Use `collector_ts_us` as the initial common timebase for multi-RX/radar
+alignment. Keep firmware `ts_us` for device-local interval and jitter analysis.
+Network and serial latency still need to be measured during LD2450 validation.
 
-Each node should eventually report health information.
+## Required hardware verification
 
-Possible health fields:
+Before accepting a firmware profile:
 
-- node_id
-- role
-- uptime
-- free heap
-- Wi-Fi status
-- packet_count
-- csi_packet_count
-- csi_pps
-- firmware version
-
-## Next Firmware Implementation Steps
-
-1. Add common Wi-Fi initialization helpers.
-2. Add TX packet sender task.
-3. Add RX CSI initialization.
-4. Add CSI callback stub.
-5. Add UDP packet output.
-6. Add health telemetry.
-7. Add MQTT support after UDP path is stable.
+1. verify node ID, role, addresses, Wi-Fi channel, and physical TX MAC;
+2. run both RX nodes simultaneously for at least two to three minutes;
+3. confirm accepted and forwarded rates match the configured expectations;
+4. confirm frame-count step is 1 at the default forwarding interval;
+5. confirm queue depth recovers and drop/oversize/failure counters stay zero;
+6. test MAC filter disabled, incorrect, and correct configurations;
+7. disconnect one RX and confirm only that node becomes offline;
+8. save the recording under the canonical session naming standard.
