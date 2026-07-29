@@ -311,6 +311,21 @@ def main():
         try:
             message = json.loads(line)
 
+            # mqtt_collector also forwards health and node state records.
+            # They must not enter the CSI filters, but status remains visible
+            # to a dashboard/process consuming this program's output.
+            message_type = message.get("message_type", "csi")
+            if message_type == "node_status":
+                print(
+                    f"node_id={message.get('node_id', 'unknown')} "
+                    f"node_status={message.get('status', 'unknown')} "
+                    f"source={message.get('source', '')}",
+                    flush=True,
+                )
+                continue
+            if message_type != "csi":
+                continue
+
             # Mesajın hangi RX node'dan geldiğini bul.
             node_id = message.get(
                 "node_id",

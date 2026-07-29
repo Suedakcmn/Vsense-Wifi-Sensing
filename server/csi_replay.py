@@ -158,6 +158,12 @@ def main():
         help="MQTT broker port",
     )
     parser.add_argument(
+        "--health-interval",
+        type=float,
+        default=1.0,
+        help="Seconds between simulated MQTT health messages",
+    )
+    parser.add_argument(
     "--override-node-id",
     action="store_true",
     help="Replace node_id in recorded messages with --node-id",
@@ -191,6 +197,9 @@ def main():
 )
 
     count = 0
+    started_at = time.monotonic()
+    last_health = 0.0
+    published_nodes = set()
 
     try:
         for message in messages:
@@ -211,11 +220,33 @@ def main():
 
                 topic = f"vsense/{node_id}/csi"
 
+                if node_id not in published_nodes:
+                    client.publish(
+                        f"vsense/{node_id}/status",
+                        json.dumps({"status": "online"}),
+                        qos=1,
+                        retain=True,
+                    )
+                    published_nodes.add(node_id)
+
                 client.publish(
                     topic,
                     json.dumps(message),
                     qos=0,
                 )
+                now = time.monotonic()
+                if now - last_health >= args.health_interval:
+                    for active_node in published_nodes:
+                        client.publish(
+                            f"vsense/{active_node}/health",
+                            json.dumps({
+                                "node_id": active_node,
+                                "uptime_ms": int((now - started_at) * 1000),
+                                "replay": True,
+                            }),
+                            qos=0,
+                        )
+                    last_health = now
 
             count += 1
 
@@ -226,6 +257,13 @@ def main():
 
     finally:
         if client is not None:
+            for node_id in published_nodes:
+                client.publish(
+                    f"vsense/{node_id}/status",
+                    json.dumps({"status": "offline"}),
+                    qos=1,
+                    retain=True,
+                )
             time.sleep(0.2)
             client.loop_stop()
             client.disconnect()

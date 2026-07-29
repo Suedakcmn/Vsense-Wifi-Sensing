@@ -112,10 +112,25 @@ def stdin_reader(message_queue):
 
         try:
             message = json.loads(line)
+
+            if message.get("message_type") == "node_status":
+                message_queue.put(
+                    {
+                        "message_type": "node_status",
+                        "node_id": message.get("node_id", "unknown"),
+                        "status": message.get("status", "unknown"),
+                    }
+                )
+                continue
+
+            if message.get("message_type", "csi") != "csi":
+                continue
+
             amplitude = message_to_amplitude(message)
 
             message_queue.put(
                 {
+                    "message_type": "csi",
                     "ts_us": message.get("ts_us"),
                     "node_id": message.get("node_id", "unknown"),
                     "rssi": message.get("rssi"),
@@ -244,20 +259,35 @@ def parse_args():
     return parser.parse_args()
 
 
+def create_node_state(args):
+    return {
+        "temporal_filter": TemporalCSIFilter(
+            history_size=args.filter_history,
+            hampel_window=args.hampel_window,
+            hampel_n_sigma=args.hampel_n_sigma,
+            savgol_window=args.savgol_window,
+            savgol_polyorder=args.savgol_polyorder,
+        ),
+        "score_buffer": deque(maxlen=args.window_size),
+        "frame_history": deque(maxlen=args.history),
+        "score_history": deque(maxlen=args.history),
+        "previous_normalized": None,
+        "frame_count": 0,
+        "is_moving": False,
+        "high_count": 0,
+        "low_count": 0,
+        "connection_status": "online",
+        "latest_score": None,
+        "latest_rssi": None,
+    }
+
+
 def main():
     args = parse_args()
 
     selected_indices = load_selected_indices(
         args.selected_subcarriers
     )
-    temporal_filter = TemporalCSIFilter(
-        history_size=args.filter_history,
-        hampel_window=args.hampel_window,
-        hampel_n_sigma=args.hampel_n_sigma,
-        savgol_window=args.savgol_window,
-        savgol_polyorder=args.savgol_polyorder,
-    )
-
     print(
         f"Loaded {len(selected_indices)} selected CSI indices.",
         file=sys.stderr,
@@ -266,16 +296,8 @@ def main():
 
     message_queue = queue.Queue(maxsize=500)
 
-    score_buffer = deque(maxlen=args.window_size)
-    frame_history = deque(maxlen=args.history)
-    score_history = deque(maxlen=args.history)
-
-    previous_normalized = None
-    frame_count = 0
-
-    is_moving = False
-    high_count = 0
-    low_count = 0
+    node_states = {}
+    node_lines = {}
 
     print(
         "Reading CSI JSON lines from stdin. Press Ctrl+C to stop.",
@@ -299,19 +321,13 @@ def main():
 
     fig, ax = plt.subplots()
 
-    motion_line, = ax.plot(
-        [],
-        [],
-        label="Motion score",
-    )
-
     threshold_line = ax.axhline(
         args.threshold,
         linestyle="--",
         label="Threshold",
     )
 
-    ax.set_title("Live CSI Motion Score")
+    ax.set_title("Live CSI Motion Score by Receiver")
     ax.set_xlabel("Frame")
     ax.set_ylabel("Motion score")
     ax.legend()
@@ -319,28 +335,34 @@ def main():
     status_text = ax.text(
         0.02,
         0.95,
-        "Status: WAITING",
+        "Waiting for receiver nodes...",
         transform=ax.transAxes,
         verticalalignment="top",
     )
 
+    def get_node_state(node_id):
+        if node_id not in node_states:
+            node_states[node_id] = create_node_state(args)
+            node_lines[node_id], = ax.plot([], [], label=node_id)
+            ax.legend()
+            print(f"New CSI node detected: {node_id}", file=sys.stderr)
+        return node_states[node_id]
+
     def process_new_messages():
-        nonlocal previous_normalized
-        nonlocal frame_count
-        nonlocal is_moving
-        nonlocal high_count
-        nonlocal low_count
-
-        latest_score = None
-        latest_node_id = "unknown"
-        latest_rssi = None
-
         while True:
             try:
                 item = message_queue.get_nowait()
             except queue.Empty:
                 break
 
+            node_id = item["node_id"]
+            state = get_node_state(node_id)
+
+            if item["message_type"] == "node_status":
+                state["connection_status"] = item["status"]
+                continue
+
+            state["connection_status"] = "online"
             amplitude = item["amplitude"]
 
             cleaned = clean_amplitude(
@@ -348,7 +370,7 @@ def main():
                 args.edge_trim,
             )
 
-            temporally_filtered = temporal_filter.process(
+            temporally_filtered = state["temporal_filter"].process(
                 cleaned
             )
 
@@ -356,37 +378,39 @@ def main():
                 temporally_filtered
             )
 
-            latest_node_id = item["node_id"]
-            latest_rssi = item["rssi"]
+            state["latest_rssi"] = item["rssi"]
             latest_ts_us = item["ts_us"]
 
-            if previous_normalized is None:
-                previous_normalized = normalized
+            if state["previous_normalized"] is None:
+                state["previous_normalized"] = normalized
                 continue
 
-            if len(previous_normalized) != len(normalized):
+            if len(state["previous_normalized"]) != len(normalized):
                 print(
-                    "CSI vector length changed. Resetting score buffer.",
+                    f"CSI vector length changed for {node_id}. "
+                    "Resetting its score buffer.",
                     file=sys.stderr,
                 )
 
-                previous_normalized = normalized
-                score_buffer.clear()
-                temporal_filter.reset()
-                high_count = 0
-                low_count = 0
-                is_moving = False
+                state["previous_normalized"] = normalized
+                state["score_buffer"].clear()
+                state["temporal_filter"].reset()
+                state["high_count"] = 0
+                state["low_count"] = 0
+                state["is_moving"] = False
                 continue
 
             frame_difference = np.abs(
-                normalized - previous_normalized
+                normalized - state["previous_normalized"]
             )
 
             if int(np.max(selected_indices)) >= len(frame_difference):
-                raise ValueError(
-                    "A selected CSI index is outside "
-                    "the frame-difference vector."
+                print(
+                    f"Skipping frame for {node_id}: selected CSI index "
+                    "is outside the frame-difference vector.",
+                    file=sys.stderr,
                 )
+                continue
 
             selected_difference = frame_difference[
                 selected_indices
@@ -395,86 +419,102 @@ def main():
             frame_score = float(
                 np.mean(selected_difference)
             )
-            score_buffer.append(frame_score)
+            state["score_buffer"].append(frame_score)
 
-            previous_normalized = normalized
+            state["previous_normalized"] = normalized
 
-            motion_score = float(np.mean(score_buffer))
+            motion_score = float(np.mean(state["score_buffer"]))
 
             if motion_score > args.threshold:
-                high_count += 1
-                low_count = 0
+                state["high_count"] += 1
+                state["low_count"] = 0
             else:
-                low_count += 1
-                high_count = 0
+                state["low_count"] += 1
+                state["high_count"] = 0
 
-            if not is_moving and high_count >= args.start_count:
-                is_moving = True
+            if (
+                not state["is_moving"]
+                and state["high_count"] >= args.start_count
+            ):
+                state["is_moving"] = True
 
                 print(
                     f"EVENT=HAREKET "
                     f"ts_us={latest_ts_us} "
-                    f"node_id={latest_node_id} "
+                    f"node_id={node_id} "
                     f"motion_score={motion_score:.4f} "
                     f"threshold={args.threshold:.4f}",
                     file=sys.stderr,
                     flush=True,
                 )
 
-            elif is_moving and low_count >= args.stop_count:
-                is_moving = False
+            elif (
+                state["is_moving"]
+                and state["low_count"] >= args.stop_count
+            ):
+                state["is_moving"] = False
 
                 print(
                     f"EVENT=STILL "
                     f"ts_us={latest_ts_us} "
-                    f"node_id={latest_node_id} "
+                    f"node_id={node_id} "
                     f"motion_score={motion_score:.4f} "
                     f"threshold={args.threshold:.4f}",
                     file=sys.stderr,
                     flush=True,
                 )
 
-            frame_count += 1
-            frame_history.append(frame_count)
-            score_history.append(motion_score)
-
-            latest_score = motion_score
-
-        return latest_score, latest_node_id, latest_rssi
+            state["frame_count"] += 1
+            state["frame_history"].append(state["frame_count"])
+            state["score_history"].append(motion_score)
+            state["latest_score"] = motion_score
 
     def update(_frame):
-        latest_score, latest_node_id, latest_rssi = (
-            process_new_messages()
-        )
+        process_new_messages()
 
-        if not frame_history:
-            status_text.set_text("Status: WAITING")
-            return motion_line, threshold_line, status_text
+        latest_frames = []
+        all_scores = []
+        status_rows = []
 
-        x = list(frame_history)
-        y = list(score_history)
+        for node_id, state in sorted(node_states.items()):
+            x = list(state["frame_history"])
+            y = list(state["score_history"])
+            node_lines[node_id].set_data(x, y)
+            node_lines[node_id].set_alpha(
+                1.0 if state["connection_status"] == "online" else 0.3
+            )
+            if x:
+                latest_frames.append(x[-1])
+                all_scores.extend(y)
 
-        motion_line.set_data(x, y)
-
-        x_min = max(0, x[-1] - args.history)
-        x_max = max(args.history, x[-1] + 1)
-        ax.set_xlim(x_min, x_max)
-
-        y_max = max(max(y), args.threshold, 0.1)
-        ax.set_ylim(0, y_max * 1.2)
-
-        if latest_score is not None:
-            status = "HAREKET" if is_moving else "STILL"
-
-            status_text.set_text(
-                f"Status: {status}\n"
-                f"Score: {latest_score:.4f}\n"
-                f"Threshold: {args.threshold:.4f}\n"
-                f"Node: {latest_node_id}\n"
-                f"RSSI: {latest_rssi}"
+            motion = "HAREKET" if state["is_moving"] else "STILL"
+            score = (
+                f"{state['latest_score']:.4f}"
+                if state["latest_score"] is not None
+                else "-"
+            )
+            status_rows.append(
+                f"{node_id}: {state['connection_status'].upper()} | "
+                f"{motion} | score={score} | RSSI={state['latest_rssi']}"
             )
 
-        return motion_line, threshold_line, status_text
+        if latest_frames:
+            newest_frame = max(latest_frames)
+            ax.set_xlim(
+                max(0, newest_frame - args.history),
+                max(args.history, newest_frame + 1),
+            )
+            ax.set_ylim(
+                0,
+                max(max(all_scores), args.threshold, 0.1) * 1.2,
+            )
+
+        status_text.set_text(
+            "\n".join(status_rows) if status_rows
+            else "Waiting for receiver nodes..."
+        )
+
+        return [*node_lines.values(), threshold_line, status_text]
 
     animation = FuncAnimation(
         fig,
