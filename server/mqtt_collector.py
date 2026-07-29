@@ -1,133 +1,151 @@
+"""Subscribe to all VSense nodes and expose one normalized JSONL stream."""
+
 import argparse
 import json
 import sys
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
 
-def on_connect(client, userdata, flags, reason_code, properties):
-    """Called when connection to MQTT broker succeeds or fails."""
-    if reason_code == 0:
-        topic = userdata["topic"]
-
-        print(
-            f"Connected to MQTT broker. Subscribing to: {topic}",
-            file=sys.stderr,
-        )
-
-        client.subscribe(topic)
-
-    else:
-        print(
-            f"MQTT connection failed. Reason code: {reason_code}",
-            file=sys.stderr,
-        )
+def utc_now():
+    return datetime.now(timezone.utc).isoformat()
 
 
-def on_message(client, userdata, msg):
-    """Receive MQTT message and forward valid JSON to stdout."""
-    try:
-        payload = msg.payload.decode("utf-8")
-        message = json.loads(payload)
+class Collector:
+    def __init__(self, topics, offline_timeout=5.0, record=None):
+        self.topics = topics
+        self.offline_timeout = offline_timeout
+        self.last_seen = {}
+        self.states = {}
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.record_file = None
+        if record is not None:
+            record.parent.mkdir(parents=True, exist_ok=True)
+            self.record_file = record.open("a", encoding="utf-8")
 
-    except UnicodeDecodeError as exc:
-        print(
-            f"Skipping non-UTF8 MQTT message: {exc}",
-            file=sys.stderr,
-        )
-        return
+    def emit(self, message):
+        line = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+        with self.lock:
+            print(line, flush=True)
+            if self.record_file is not None:
+                self.record_file.write(line + "\n")
+                self.record_file.flush()
 
-    except json.JSONDecodeError as exc:
-        print(
-            f"Skipping invalid JSON message: {exc}",
-            file=sys.stderr,
-        )
-        return
+    def node_status(self, node_id, status, source):
+        if self.states.get(node_id) == status:
+            return
+        self.states[node_id] = status
+        self.emit({
+            "schema_version": 2,
+            "message_type": "node_status",
+            "node_id": node_id,
+            "status": status,
+            "source": source,
+            "recorded_at": utc_now(),
+        })
 
-    # Topic format:
-    # vsense/{node_id}/csi
-    topic_parts = msg.topic.split("/")
+    def on_connect(self, client, userdata, flags, reason_code, properties):
+        if reason_code != 0:
+            print(f"MQTT connection failed: {reason_code}", file=sys.stderr)
+            return
+        for topic in self.topics:
+            client.subscribe(topic)
+        print("MQTT connected; subscribed to " + ", ".join(self.topics), file=sys.stderr)
 
-    if "node_id" not in message and len(topic_parts) >= 3:
-        message["node_id"] = topic_parts[1]
+    def on_message(self, client, userdata, msg):
+        parts = msg.topic.split("/")
+        if len(parts) != 3 or parts[0] != "vsense":
+            print(f"Skipping unexpected topic: {msg.topic}", file=sys.stderr)
+            return
+        node_id, message_type = parts[1], parts[2]
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            print(f"Skipping invalid payload on {msg.topic}: {exc}", file=sys.stderr)
+            return
+        if not isinstance(payload, dict):
+            print(f"Skipping non-object payload on {msg.topic}", file=sys.stderr)
+            return
 
-    # IMPORTANT:
-    # Only JSON goes to stdout.
-    # This allows:
-    #
-    # mqtt_collector.py | csi_live.py
-    #
-    print(
-        json.dumps(message),
-        flush=True,
-    )
+        now = time.monotonic()
+        self.last_seen[node_id] = now
+        payload["node_id"] = node_id  # topic identity is authoritative
+        payload.setdefault("schema_version", 2)
+        payload["message_type"] = message_type
+        payload["mqtt_topic"] = msg.topic
+        payload["recorded_at"] = utc_now()
+
+        if message_type == "status":
+            status = payload.get("status")
+            if status in {"online", "offline"}:
+                self.node_status(node_id, status, "mqtt_status")
+            return
+
+        self.node_status(node_id, "online", message_type)
+        self.emit(payload)
+
+    def watchdog(self):
+        while not self.stop_event.wait(min(0.5, self.offline_timeout / 2)):
+            now = time.monotonic()
+            for node_id, last_seen in list(self.last_seen.items()):
+                if now - last_seen >= self.offline_timeout:
+                    self.node_status(node_id, "offline", "timeout")
+
+    def close(self):
+        self.stop_event.set()
+        if self.record_file is not None:
+            self.record_file.close()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Multi-node VSense MQTT collector")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=1883)
+    parser.add_argument("--username")
+    parser.add_argument("--password")
+    parser.add_argument("--client-id", default="vsense-collector")
+    parser.add_argument("--csi-topic", default="vsense/+/csi")
+    parser.add_argument("--health-topic", default="vsense/+/health")
+    parser.add_argument("--status-topic", default="vsense/+/status")
+    parser.add_argument("--offline-timeout", type=float, default=5.0)
+    parser.add_argument("--record", type=Path, help="Append all normalized messages to JSONL")
+    return parser.parse_args()
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="VSense MQTT CSI collector."
+    args = parse_args()
+    if args.offline_timeout <= 0:
+        raise SystemExit("--offline-timeout must be positive")
+    collector = Collector(
+        [args.csi_topic, args.health_topic, args.status_topic],
+        args.offline_timeout,
+        args.record,
     )
-
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="MQTT broker hostname or IP.",
-    )
-
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=1883,
-        help="MQTT broker port.",
-    )
-
-    parser.add_argument(
-        "--topic",
-        default="vsense/+/csi",
-        help="MQTT CSI topic pattern.",
-    )
-
-    args = parser.parse_args()
-
-    userdata = {
-        "topic": args.topic,
-    }
-
     client = mqtt.Client(
         mqtt.CallbackAPIVersion.VERSION2,
-        userdata=userdata,
+        client_id=args.client_id,
+        userdata=collector,
     )
-
-    client.on_connect = on_connect
-    client.on_message = on_message
-
-    print(
-        f"Connecting to MQTT broker at "
-        f"{args.host}:{args.port}",
-        file=sys.stderr,
-    )
-
+    if args.username:
+        client.username_pw_set(args.username, args.password)
+    client.on_connect = collector.on_connect
+    client.on_message = collector.on_message
+    watchdog = threading.Thread(target=collector.watchdog, daemon=True)
+    watchdog.start()
+    print(f"Connecting to MQTT broker at {args.host}:{args.port}", file=sys.stderr)
     try:
-        client.connect(
-            args.host,
-            args.port,
-            keepalive=60,
-        )
-
+        client.connect(args.host, args.port, keepalive=10)
         client.loop_forever()
-
     except KeyboardInterrupt:
-        print(
-            "\nStopping MQTT collector.",
-            file=sys.stderr,
-        )
-
-    except Exception as exc:
-        print(
-            f"MQTT collector error: {exc}",
-            file=sys.stderr,
-        )
-        raise
+        print("\nStopping MQTT collector.", file=sys.stderr)
+    finally:
+        collector.close()
+        client.disconnect()
 
 
 if __name__ == "__main__":
