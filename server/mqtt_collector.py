@@ -15,6 +15,10 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def collector_timestamp_us():
+    return time.time_ns() // 1_000
+
+
 class Collector:
     def __init__(self, topics, offline_timeout=5.0, record=None):
         self.topics = topics
@@ -47,6 +51,7 @@ class Collector:
             "status": status,
             "source": source,
             "recorded_at": utc_now(),
+            "collector_ts_us": collector_timestamp_us(),
         })
 
     def on_connect(self, client, userdata, flags, reason_code, properties):
@@ -79,6 +84,7 @@ class Collector:
         payload["message_type"] = message_type
         payload["mqtt_topic"] = msg.topic
         payload["recorded_at"] = utc_now()
+        payload["collector_ts_us"] = collector_timestamp_us()
 
         if message_type == "status":
             status = payload.get("status")
@@ -113,6 +119,7 @@ def parse_args():
     parser.add_argument("--health-topic", default="vsense/+/health")
     parser.add_argument("--status-topic", default="vsense/+/status")
     parser.add_argument("--offline-timeout", type=float, default=5.0)
+    parser.add_argument("--keepalive", type=int, default=30)
     parser.add_argument("--record", type=Path, help="Append all normalized messages to JSONL")
     return parser.parse_args()
 
@@ -121,6 +128,8 @@ def main():
     args = parse_args()
     if args.offline_timeout <= 0:
         raise SystemExit("--offline-timeout must be positive")
+    if not 15 <= args.keepalive <= 60:
+        raise SystemExit("--keepalive must be between 15 and 60 seconds")
     collector = Collector(
         [args.csi_topic, args.health_topic, args.status_topic],
         args.offline_timeout,
@@ -139,7 +148,7 @@ def main():
     watchdog.start()
     print(f"Connecting to MQTT broker at {args.host}:{args.port}", file=sys.stderr)
     try:
-        client.connect(args.host, args.port, keepalive=10)
+        client.connect(args.host, args.port, keepalive=args.keepalive)
         client.loop_forever()
     except KeyboardInterrupt:
         print("\nStopping MQTT collector.", file=sys.stderr)

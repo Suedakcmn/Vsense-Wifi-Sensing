@@ -107,7 +107,7 @@ void vsense_mqtt_start(void)
 
         .credentials.client_id = VSENSE_NODE_ID,
 
-        .session.keepalive = 3,
+        .session.keepalive = VSENSE_MQTT_KEEPALIVE_SECONDS,
         .session.last_will.topic = s_status_topic,
         .session.last_will.msg = s_status_offline_payload,
         .session.last_will.msg_len = 0,
@@ -160,8 +160,9 @@ void vsense_mqtt_start(void)
 
     ESP_LOGI(
         TAG,
-        "MQTT client started. Broker=%s",
-        VSENSE_MQTT_BROKER_URI
+        "MQTT client started. Broker=%s keepalive=%d s",
+        VSENSE_MQTT_BROKER_URI,
+        VSENSE_MQTT_KEEPALIVE_SECONDS
     );
 }
 
@@ -175,15 +176,21 @@ bool vsense_mqtt_publish_health(
     uint32_t free_heap,
     uint32_t minimum_free_heap,
     uint32_t udp_packets,
+    uint32_t csi_callbacks,
+    uint32_t csi_filtered,
     uint32_t csi_received,
     uint32_t csi_queued,
     uint32_t csi_sent,
+    uint32_t csi_pps,
+    uint32_t csi_forwarded_pps,
     uint32_t udp_csi_sent,
     uint32_t udp_csi_failed,
     uint32_t mqtt_csi_published,
     uint32_t mqtt_csi_failed,
     uint32_t csi_dropped,
+    uint32_t csi_oversized,
     uint32_t queue_depth,
+    uint32_t raw_send_every_n_frames,
     int8_t last_rssi
 )
 {
@@ -215,7 +222,7 @@ bool vsense_mqtt_publish_health(
         return false;
     }
 
-    char payload[512];
+    char payload[768];
 
     int payload_length = snprintf(
         payload,
@@ -226,15 +233,21 @@ bool vsense_mqtt_publish_health(
         "\"free_heap\":%lu,"
         "\"minimum_free_heap\":%lu,"
         "\"udp_packets\":%lu,"
+        "\"csi_callbacks\":%lu,"
+        "\"csi_filtered\":%lu,"
         "\"csi_received\":%lu,"
         "\"csi_queued\":%lu,"
         "\"csi_sent\":%lu,"
+        "\"csi_pps\":%lu,"
+        "\"csi_forwarded_pps\":%lu,"
         "\"udp_csi_sent\":%lu,"
         "\"udp_csi_failed\":%lu,"
         "\"mqtt_csi_published\":%lu,"
         "\"mqtt_csi_failed\":%lu,"
         "\"csi_dropped\":%lu,"
+        "\"csi_oversized\":%lu,"
         "\"queue_depth\":%lu,"
+        "\"raw_send_every_n_frames\":%lu,"
         "\"last_rssi\":%d"
         "}",
         VSENSE_NODE_ID,
@@ -242,15 +255,21 @@ bool vsense_mqtt_publish_health(
         (unsigned long)free_heap,
         (unsigned long)minimum_free_heap,
         (unsigned long)udp_packets,
+        (unsigned long)csi_callbacks,
+        (unsigned long)csi_filtered,
         (unsigned long)csi_received,
         (unsigned long)csi_queued,
         (unsigned long)csi_sent,
+        (unsigned long)csi_pps,
+        (unsigned long)csi_forwarded_pps,
         (unsigned long)udp_csi_sent,
         (unsigned long)udp_csi_failed,
         (unsigned long)mqtt_csi_published,
         (unsigned long)mqtt_csi_failed,
         (unsigned long)csi_dropped,
+        (unsigned long)csi_oversized,
         (unsigned long)queue_depth,
+        (unsigned long)raw_send_every_n_frames,
         (int)last_rssi
     );
 

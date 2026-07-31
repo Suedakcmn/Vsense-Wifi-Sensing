@@ -1,32 +1,34 @@
-# VSense CSI Packet Format v0
+# VSense CSI Packet Format
 
 ## Purpose
 
-This document defines the first proposed packet contract between RX ESP32-S3 nodes and the Mac collector.
+This document defines the implemented JSON contract between RX ESP32-S3 nodes
+and the Mac collector. `csi_replay.py` can simulate the same logical shape.
 
-During Week 1, hardware is not available. Therefore, csi_replay.py can simulate a similar packet shape using the provided CSI dataset.
+## Firmware CSI JSON
 
-When hardware arrives, RX firmware should produce packets compatible with this structure.
-
-## Current Server-Side Logical Format
-
-The current server skeleton expects JSON-line messages with fields similar to:
+The RX firmware sends one JSON object per CSI frame with:
 
 - ts_us
 - node_id
+- frame_count
 - rssi
+- channel
+- len
 - csi
-- label
 
-Example logical message:
+Example:
 
-{
-  "ts_us": 0,
-  "node_id": "rx_01",
-  "rssi": -55,
-  "csi": [3, 4, -2, 5],
-  "label": "empty"
-}
+```json
+{"ts_us":123456,"node_id":"rx_01","frame_count":42,"rssi":-55,"channel":6,"len":4,"csi":[3,4,-2,5]}
+```
+
+`ts_us` is device uptime from the RX and `frame_count` counts accepted CSI
+frames before intentional decimation. `len` must equal the number of entries in
+`csi`.
+
+Collectors add `recorded_at` and `collector_ts_us`. The latter is the common
+Mac clock for multi-RX and LD2450 alignment.
 
 This format is useful for replay/live testing before real ESP32 hardware is available.
 
@@ -37,18 +39,6 @@ label is not expected from ESP32 firmware.
 It may exist only in recorded datasets for analysis, validation, or ML experiments.
 
 Real RX firmware should send CSI and metadata, not activity labels.
-
-## Proposed Firmware Packet Fields
-
-- magic: constant marker to identify VSense packets
-- version: packet format version
-- node_id: RX node identifier
-- seq_no: increasing packet sequence number
-- ts_us: timestamp in microseconds
-- rssi: received signal strength
-- channel: Wi-Fi channel
-- csi_len: number of CSI bytes
-- csi_payload: raw CSI values in imag/real pairs
 
 ## CSI Payload Layout
 
@@ -66,33 +56,24 @@ Phase can be computed as:
 
 phase = atan2(imag, real)
 
-## Transport v0
+## Transports
 
-Version 0 transport:
+The same CSI JSON payload is attempted independently over:
 
-RX ESP32-S3 -> UDP -> Mac collector
+- RX ESP32-S3 -> UDP -> Mac collector
+- RX ESP32-S3 -> MQTT broker -> Mac collector
 
-Default collector settings are currently stored in vsense_config.h:
+Configuration is defined through Kconfig and exposed by `vsense_config.h`.
+MQTT topics are:
 
-- VSENSE_COLLECTOR_IP
-- VSENSE_COLLECTOR_UDP_PORT
-
-## Future MQTT Topics
-
-Future CSI topic:
-
-vsense/{node_id}/csi
-
-Future health topic:
-
-vsense/{node_id}/health
+- `vsense/{node_id}/csi`
+- `vsense/{node_id}/health`
+- `vsense/{node_id}/status`
 
 ## Open Questions
 
-1. Should node_id be fixed-length bytes or a string?
-2. Should we include source MAC address?
-3. Should timestamp come from ESP32 or Mac collector?
-4. Should CSI payload be sent raw or compressed?
-5. Should UDP packets include a checksum?
-6. Should RSSI and channel be included in every packet?
-7. Should the first hardware version use JSON for debugging or compact binary for performance?
+1. When should JSON be replaced by a compact binary representation?
+2. Is collector receive time sufficiently accurate for LD2450 alignment, or
+   is clock/latency calibration required?
+3. Should accepted source MAC be included in every recorded CSI row?
+4. Is an application checksum needed in addition to UDP/Wi-Fi integrity?
