@@ -52,7 +52,11 @@ static struct sockaddr_in s_collector_addr;
 
 
 
-#define VSENSE_CSI_QUEUE_LENGTH 64
+#define VSENSE_CSI_QUEUE_LENGTH 128
+#define VSENSE_CSI_QUEUE_SEND_TIMEOUT_MS 5
+#define VSENSE_CSI_SENDER_TASK_STACK_SIZE 6144
+#define VSENSE_CSI_SENDER_TASK_PRIORITY 6
+#define VSENSE_RX_HEALTH_TASK_STACK_SIZE 6144
 #define VSENSE_CSI_JSON_BUFFER_LEN \
     (VSENSE_CSI_BUFFER_MAX_LEN * 5 + 256)
 
@@ -69,6 +73,16 @@ typedef struct {
     uint16_t len;
     int8_t csi[VSENSE_CSI_BUFFER_MAX_LEN];
 } vsense_csi_frame_t;
+
+/*
+ * CSI callbacks also fire for Wi-Fi traffic created by forwarding CSI over
+ * UDP/MQTT. Queuing every callback therefore creates a feedback loop. Keep
+ * only the latest radio measurement here; the UDP probe receiver consumes at
+ * most one fresh measurement for each packet sent by the VSense TX node.
+ */
+static portMUX_TYPE s_latest_csi_lock = portMUX_INITIALIZER_UNLOCKED;
+static vsense_csi_frame_t s_latest_csi_frame;
+static uint32_t s_latest_csi_generation = 0;
 
 
 static void vsense_rx_health_task(void *arg)
@@ -473,6 +487,85 @@ static bool vsense_rx_tx_mac_filter_init(void)
     return true;
 }
 
+static bool vsense_rx_queue_latest_csi_for_probe(
+    uint32_t *last_consumed_generation
+)
+{
+    if (
+        last_consumed_generation == NULL ||
+        s_csi_queue == NULL
+    ) {
+        return false;
+    }
+
+    vsense_csi_frame_t frame;
+    uint32_t generation;
+
+    portENTER_CRITICAL(&s_latest_csi_lock);
+    generation = s_latest_csi_generation;
+
+    if (
+        generation != 0 &&
+        generation != *last_consumed_generation
+    ) {
+        frame = s_latest_csi_frame;
+    }
+
+    portEXIT_CRITICAL(&s_latest_csi_lock);
+
+    if (
+        generation == 0 ||
+        generation == *last_consumed_generation
+    ) {
+        return false;
+    }
+
+    *last_consumed_generation = generation;
+    s_csi_frames_received++;
+    s_last_rssi = frame.rssi;
+    frame.frame_count = s_csi_frames_received;
+
+    if (
+        (s_csi_frames_received % VSENSE_RAW_SEND_EVERY_N_FRAMES)
+        != 0
+    ) {
+        return true;
+    }
+
+    /*
+     * This runs in the UDP probe task, not in the Wi-Fi CSI callback. A short
+     * bounded wait lets the higher-priority sender drain transient bursts
+     * without blocking the radio callback or silently losing a sample.
+     */
+    if (
+        xQueueSend(
+            s_csi_queue,
+            &frame,
+            pdMS_TO_TICKS(VSENSE_CSI_QUEUE_SEND_TIMEOUT_MS)
+        ) == pdTRUE
+    ) {
+        s_csi_frames_queued++;
+    } else {
+        s_csi_frames_dropped++;
+    }
+
+    if ((s_csi_frames_received % 1000) == 0) {
+        ESP_LOGI(
+            TAG,
+            "CSI probe-matched=%lu queued=%lu sent=%lu "
+            "dropped=%lu len=%u rssi=%d",
+            (unsigned long)s_csi_frames_received,
+            (unsigned long)s_csi_frames_queued,
+            (unsigned long)s_csi_frames_sent,
+            (unsigned long)s_csi_frames_dropped,
+            frame.len,
+            frame.rssi
+        );
+    }
+
+    return true;
+}
+
 static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
 {
     (void)ctx;
@@ -498,16 +591,9 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
     }
 #endif
 
-    s_csi_frames_received++;
-    s_last_rssi = data->rx_ctrl.rssi;
-
-    if ((s_csi_frames_received % VSENSE_RAW_SEND_EVERY_N_FRAMES) != 0) {
-        return;
-    }
-
     vsense_csi_frame_t frame = {
         .ts_us = esp_timer_get_time(),
-        .frame_count = s_csi_frames_received,
+        .frame_count = 0,
         .rssi = data->rx_ctrl.rssi,
         .channel = data->rx_ctrl.channel,
         .len = 0,
@@ -522,24 +608,10 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
     frame.len = (uint16_t)data->len;
     memcpy(frame.csi, data->buf, frame.len);
 
-    if (xQueueSend(s_csi_queue, &frame, 0) == pdTRUE) {
-        s_csi_frames_queued++;
-    } else {
-        s_csi_frames_dropped++;
-    }
-
-    if ((s_csi_frames_received % 1000) == 0) {
-        ESP_LOGI(
-            TAG,
-            "CSI received=%lu queued=%lu sent=%lu dropped=%lu len=%u rssi=%d",
-            (unsigned long)s_csi_frames_received,
-            (unsigned long)s_csi_frames_queued,
-            (unsigned long)s_csi_frames_sent,
-            (unsigned long)s_csi_frames_dropped,
-            frame.len,
-            frame.rssi
-        );
-    }
+    portENTER_CRITICAL(&s_latest_csi_lock);
+    s_latest_csi_frame = frame;
+    s_latest_csi_generation++;
+    portEXIT_CRITICAL(&s_latest_csi_lock);
 }
 
 static void vsense_rx_csi_init(void)
@@ -624,9 +696,9 @@ static void vsense_rx_udp_task(void *arg)
     BaseType_t task_created = xTaskCreate(
         vsense_csi_sender_task,
         "csi_sender",
-        6144,
+        VSENSE_CSI_SENDER_TASK_STACK_SIZE,
         NULL,
-        5,
+        VSENSE_CSI_SENDER_TASK_PRIORITY,
         NULL
     );
 
@@ -642,7 +714,7 @@ static void vsense_rx_udp_task(void *arg)
     BaseType_t health_task_created = xTaskCreate(
         vsense_rx_health_task,
         "rx_health",
-        3072,
+        VSENSE_RX_HEALTH_TASK_STACK_SIZE,
         NULL,
         3,
         NULL
@@ -682,6 +754,7 @@ static void vsense_rx_udp_task(void *arg)
     ESP_LOGI(TAG, "RX UDP server listening on port %d.", VSENSE_RX_UDP_PORT);
 
     uint32_t last_logged_count = 0;
+    uint32_t last_consumed_csi_generation = 0;
 
     while (1) {
         char rx_buffer[128];
@@ -705,6 +778,9 @@ static void vsense_rx_udp_task(void *arg)
 
         rx_buffer[len] = '\0';
         s_udp_packets_received++;
+        (void)vsense_rx_queue_latest_csi_for_probe(
+            &last_consumed_csi_generation
+        );
 
         if ((s_udp_packets_received - last_logged_count) >= 100) {
             ESP_LOGI(

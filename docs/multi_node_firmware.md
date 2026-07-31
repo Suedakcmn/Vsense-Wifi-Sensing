@@ -148,7 +148,7 @@ Wi-Fi connected.
 IP address: 192.168.128.x
 CSI TX MAC filter is disabled.
 CSI collection enabled.
-CSI forwarding every 1 accepted frame(s); max_len=384 queue=64.
+CSI forwarding every 1 accepted frame(s); max_len=384 queue=128.
 ```
 
 TX startup:
@@ -179,8 +179,9 @@ TX target=rx_02 cycles=100 sent=100 failed=0
    `csi_forwarded_pps` near `csi_pps`.
 8. Disconnect RX-02 and verify its status becomes offline within five seconds.
 9. Reconnect RX-02 and verify its status returns online.
-10. Verify `csi_dropped=0`, `csi_oversized=0`, transport failure counters do
-    not increase, and queue depth returns to zero.
+10. After the collector and broker are ready, take a baseline health snapshot.
+    Verify `csi_dropped=0`, `csi_oversized=0`, transport failure counters do
+    not increase from that baseline, and queue depth returns to zero.
 11. Record packet rate, failures, drops, RSSI, channel, and CSI length.
 
 The five-second offline result comes from `mqtt_collector.py`'s traffic
@@ -219,6 +220,15 @@ advance by one, both transport failure counters remain stable, and
 `csi_dropped` stays zero. If the full dual-transport load is not stable, choose
 the smallest measured value greater than 1 and document the reason and observed
 rate here before LD2450 testing.
+
+The 31 July 2026 acceptance run retained `N=1` and measured 83.644 pps on
+RX-01 and 81.272 pps on RX-02 for more than four minutes. Both saved frame
+counters advanced without gaps; drop and oversized counters stayed zero; queue
+depth returned to zero; and transport failure counters did not increase from
+their post-startup baselines. The TX delivered approximately 100 UDP probes/s
+per target, so the difference is documented as Wi-Fi/CSI capture yield rather
+than intentional decimation. See
+`experiments/2026-07-31-multi-rx-n1-validation.md`.
 
 Do not claim the multi-node task complete until both RX nodes receive CSI
 simultaneously and the offline test passes.

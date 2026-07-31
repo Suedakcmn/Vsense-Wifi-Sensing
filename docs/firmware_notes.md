@@ -42,7 +42,7 @@ before flashing.
 - TX MAC filter: disabled until explicitly verified and enabled.
 - Maximum CSI length: 384 bytes.
 - Forwarding interval: every accepted frame (`N=1`).
-- CSI queue length: 64.
+- CSI queue length: 128.
 - MQTT keepalive: 30 seconds.
 - Health interval: 5 seconds.
 

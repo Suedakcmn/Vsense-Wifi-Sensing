@@ -90,7 +90,7 @@ menu "VSense node configuration"
 
         config VSENSE_TX_MAC
             string "Expected TX MAC address"
-            default "28:84:85:46:49:10"
+            default "84:fc:e6:5e:50:24"
             help
                 Expected TX station MAC in six-byte colon-separated
                 hexadecimal form. The value is retained even while filtering

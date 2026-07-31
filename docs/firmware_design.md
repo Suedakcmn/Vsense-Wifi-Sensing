@@ -58,14 +58,20 @@ The CSI callback deliberately performs only bounded work:
 1. validate the callback data;
 2. update source/channel/RSSI diagnostics;
 3. apply the optional TX MAC filter;
-4. count accepted frames;
-5. apply the configured forwarding interval;
-6. reject and count frames larger than `VSENSE_CSI_BUFFER_MAX_LEN`;
-7. copy the frame into a FreeRTOS queue without waiting.
+4. reject and count frames larger than `VSENSE_CSI_BUFFER_MAX_LEN`;
+5. copy the latest valid radio measurement into a protected snapshot.
 
-The queue length is 64. A separate sender task serializes queued CSI as JSON and
-attempts both UDP and MQTT delivery. A failure on one transport does not prevent
-the other attempt.
+Forwarding CSI over UDP/MQTT also generates local Wi-Fi traffic and therefore
+additional CSI callbacks. To prevent that traffic from feeding back into the
+forwarding path, each received TX UDP probe consumes at most one fresh snapshot.
+The configured forwarding interval is applied to these probe-matched samples.
+
+The queue length is 128. A separate sender task serializes queued CSI as JSON
+and attempts both UDP and MQTT delivery. A failure on one transport does not
+prevent the other attempt. Because enqueueing happens in the UDP probe task
+rather than the radio callback, it may wait for at most 5 ms for the
+higher-priority sender to drain a transiently full queue. This keeps the CSI
+callback non-blocking while avoiding avoidable burst losses.
 
 ## CSI length and transport buffers
 
@@ -87,8 +93,14 @@ Oversized CSI frames are dropped rather than silently truncated. The
 
 The default is 1. Any value greater than 1 must be supported by a recorded
 bandwidth/CPU/queue test and a synchronization rationale. The 27 July pilot used
-2 and measured roughly 47–55 forwarded frames/s. The current full-rate target
-must be verified on hardware with both RX nodes before LD2450 integration.
+2 and measured roughly 47–55 forwarded frames/s.
+
+The 31 July dual-RX validation retained `N=1` for more than four minutes. It
+measured 83.644 pps on RX-01 and 81.272 pps on RX-02, with no frame gaps,
+firmware drops, oversized frames, or steady-state transport failures. The TX
+probe rate remained approximately 100 packets/s per target; the difference is
+the measured Wi-Fi/CSI capture yield rather than configured decimation. See
+`experiments/2026-07-31-multi-rx-n1-validation.md`.
 
 ## Health telemetry
 
@@ -129,7 +141,9 @@ Before accepting a firmware profile:
 2. run both RX nodes simultaneously for at least two to three minutes;
 3. confirm accepted and forwarded rates match the configured expectations;
 4. confirm frame-count step is 1 at the default forwarding interval;
-5. confirm queue depth recovers and drop/oversize/failure counters stay zero;
+5. confirm queue depth recovers, drop/oversize counters stay zero, and
+   transport failure counters do not increase after the collector and broker
+   baseline is captured;
 6. test MAC filter disabled, incorrect, and correct configurations;
 7. disconnect one RX and confirm only that node becomes offline;
 8. save the recording under the canonical session naming standard.
