@@ -13,6 +13,8 @@ __pycache__/
 
 # Data
 data/*.parquet
+data/sessions/*_csi.jsonl
+logs/
 
 # macOS
 .DS_Store

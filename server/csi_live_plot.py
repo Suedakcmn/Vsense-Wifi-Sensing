@@ -330,7 +330,11 @@ def main():
     ax.set_title("Live CSI Motion Score by Receiver")
     ax.set_xlabel("Frame")
     ax.set_ylabel("Motion score")
-    ax.legend()
+    ax.legend(
+        loc="upper right",
+        bbox_to_anchor=(1.0, 1.0),
+        borderaxespad=0.5,
+    )
 
     status_text = ax.text(
         0.02,
@@ -344,7 +348,11 @@ def main():
         if node_id not in node_states:
             node_states[node_id] = create_node_state(args)
             node_lines[node_id], = ax.plot([], [], label=node_id)
-            ax.legend()
+            ax.legend(
+                loc="upper right",
+                bbox_to_anchor=(1.0, 1.0),
+                borderaxespad=0.5,
+            )
             print(f"New CSI node detected: {node_id}", file=sys.stderr)
         return node_states[node_id]
 
