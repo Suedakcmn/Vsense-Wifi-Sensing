@@ -37,6 +37,7 @@ def message_to_amplitude(message):
 
     return amplitude
 
+
 def clean_amplitude(amplitude, edge_trim):
     amplitude = np.asarray(amplitude, dtype=np.float32)
 
@@ -63,12 +64,12 @@ def clean_amplitude(amplitude, edge_trim):
 
     return amplitude
 
+
 def normalize_amplitude(amplitude):
     mean = float(np.mean(amplitude))
     std = float(np.std(amplitude))
 
     return (amplitude - mean) / (std + 1e-6)
-
 
 
 def load_selected_indices(file_path):
@@ -212,7 +213,6 @@ def parse_args():
         help="Consecutive low scores required to stop motion.",
     )
 
-
     parser.add_argument(
         "--selected-subcarriers",
         default="server/config/selected_subcarriers.txt",
@@ -272,7 +272,7 @@ def create_node_state(args):
         "frame_history": deque(maxlen=args.history),
         "score_history": deque(maxlen=args.history),
         "previous_normalized": None,
-        "frame_count": 0,
+        "start_time": None,  # YENİ EKLENDİ: Zaman hesaplaması için başlangıç noktası
         "is_moving": False,
         "high_count": 0,
         "low_count": 0,
@@ -292,7 +292,6 @@ def main():
         f"Loaded {len(selected_indices)} selected CSI indices.",
         file=sys.stderr,
     )
-
 
     message_queue = queue.Queue(maxsize=500)
 
@@ -328,7 +327,7 @@ def main():
     )
 
     ax.set_title("Live CSI Motion Score by Receiver")
-    ax.set_xlabel("Frame")
+    ax.set_xlabel("Time (Seconds)")  # YENİ EKLENDİ: X Ekseni artık zamanı gösteriyor
     ax.set_ylabel("Motion score")
     ax.legend(
         loc="upper right",
@@ -472,8 +471,13 @@ def main():
                     flush=True,
                 )
 
-            state["frame_count"] += 1
-            state["frame_history"].append(state["frame_count"])
+            # YENİ EKLENDİ: Frame saymak yerine gerçek mikrosaniyeyi (us) saniyeye çeviriyoruz.
+            if state["start_time"] is None:
+                state["start_time"] = latest_ts_us
+                
+            elapsed_seconds = (latest_ts_us - state["start_time"]) / 1_000_000.0
+            
+            state["frame_history"].append(elapsed_seconds)
             state["score_history"].append(motion_score)
             state["latest_score"] = motion_score
 
@@ -507,10 +511,16 @@ def main():
             )
 
         if latest_frames:
-            newest_frame = max(latest_frames)
+            max_time = max(latest_frames)
+            # Tüm nodelardaki en eski zamanı bul, grafiği ona göre ayarla
+            min_time = min((list(state["frame_history"])[0] for state in node_states.values() if state["frame_history"]), default=0)
+            
+            # X eksenindeki pencereyi (window) geçen zamana göre dinamik sınırla
+            window = max(10.0, max_time - min_time) 
+            
             ax.set_xlim(
-                max(0, newest_frame - args.history),
-                max(args.history, newest_frame + 1),
+                max(0.0, max_time - window),
+                max(window, max_time + 0.5),
             )
             ax.set_ylim(
                 0,
