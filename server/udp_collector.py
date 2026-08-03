@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def open_record_file(path: Path | None) -> TextIO | None:
+def open_record_file(path: Path):
     if path is None:
         return None
 

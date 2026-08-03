@@ -135,6 +135,35 @@ def main():
         args.offline_timeout,
         args.record,
     )
+<<<<<<< Updated upstream
+=======
+
+    parser.add_argument(
+        "--host",
+        default="192.168.128.167",
+        help="MQTT broker hostname or IP.",
+    )
+
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=1883,
+        help="MQTT broker port.",
+    )
+
+    parser.add_argument(
+        "--topic",
+        default="vsense/+/csi",
+        help="MQTT CSI topic pattern.",
+    )
+
+    args = parser.parse_args()
+
+    userdata = {
+        "topic": args.topic,
+    }
+
+>>>>>>> Stashed changes
     client = mqtt.Client(
         mqtt.CallbackAPIVersion.VERSION2,
         client_id=args.client_id,
