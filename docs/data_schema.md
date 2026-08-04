@@ -17,8 +17,8 @@ The preferred logical format for replay/live testing is:
 | rssi | Received signal strength |
 | csi | Raw CSI values in [imag0, real0, imag1, real1, ...] format |
 | label | Optional label for recorded data only |
-| schema_version | `2` for normalized MQTT records |
-| message_type | `csi`, `health`, or `node_status` |
+| schema_version | `2` for CSI/telemetry; `1` for LD2450 ground truth |
+| message_type | `csi`, `health`, `node_status`, or `ground_truth` |
 | recorded_at | Collector receive time in UTC ISO-8601 form |
 | collector_ts_us | Collector receive time as Unix epoch microseconds |
 
@@ -30,6 +30,16 @@ The firmware `ts_us` value is device uptime and is not shared across RX nodes.
 Use `collector_ts_us` to align CSI from multiple RX nodes or LD2450 radar data
 on the collector's common clock; keep `ts_us` for device-side interval and
 jitter analysis.
+
+## LD2450 ground truth
+
+The radar bridge publishes firmware records to `vsense/gt/ld2450_01`. The
+collector normalizes them as `message_type: ground_truth`, uses the topic node
+identity, and records them in `ground_truth.jsonl`. Ground-truth schema version
+1 requires `ts_us`, `frame_seq`, and a `targets` list. Each present target has
+`target_id`, `x_mm`, `y_mm`, `speed_cm_s`, and `resolution_mm`;
+`distance_mm` is optional. An empty targets list represents a valid no-target
+frame. See `docs/ld2450.md` for the full contract and campaign commands.
 
 Example logical row:
 
