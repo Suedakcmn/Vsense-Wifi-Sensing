@@ -1,8 +1,8 @@
 # VSense server — Week 4 MQTT/multi-node
 
 `mqtt_collector.py` is now the canonical receiver. It subscribes to every
-node's `csi`, `health`, and retained `status` topics, normalizes them into
-schema-v2 JSONL, optionally records the stream, and emits an `offline` state
+node's `csi`, `health`, retained `status`, and LD2450 ground-truth topics,
+normalizes them into JSONL, optionally records the stream, and emits an `offline` state
 after five seconds without any message. `udp_collector.py` remains only for
 legacy experiments.
 
@@ -77,3 +77,9 @@ python -m unittest discover -s server -p 'test_*.py'
 ```
 
 For an authenticated broker pass `--username` and `--password` to the collector.
+
+## Week 5 recording CLI
+
+Use `session_cli.py` to create a named CSI + LD2450 recording with metadata and
+separate JSONL streams. Full wiring, message schema, commands, and validation
+steps are documented in `docs/ld2450.md`.

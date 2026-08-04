@@ -24,3 +24,7 @@ logs/
 outputs/
 data/*.dat
 data/**/*.dat
+
+# Local Week 5 campaign recordings
+dataset-v1/sessions/
+dataset-v1/.active_session.json
