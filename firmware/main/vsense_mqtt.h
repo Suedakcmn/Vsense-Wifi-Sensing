@@ -16,6 +16,7 @@ bool vsense_mqtt_publish_health(
     uint32_t udp_packets,
     uint32_t csi_callbacks,
     uint32_t csi_filtered,
+    uint32_t csi_length_filtered,
     uint32_t csi_received,
     uint32_t csi_queued,
     uint32_t csi_sent,
@@ -28,6 +29,7 @@ bool vsense_mqtt_publish_health(
     uint32_t csi_dropped,
     uint32_t csi_oversized,
     uint32_t queue_depth,
+    uint32_t expected_csi_length,
     uint32_t raw_send_every_n_frames,
     int8_t last_rssi
 );
