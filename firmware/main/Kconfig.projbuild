@@ -16,6 +16,9 @@ menu "VSense node configuration"
 
         config VSENSE_NODE_ROLE_RX
             bool "RX"
+
+        config VSENSE_NODE_ROLE_LD2450
+            bool "LD2450 radar bridge"
     endchoice
 
     menu "Wi-Fi"
@@ -145,6 +148,83 @@ menu "VSense node configuration"
                 Use 1 to forward every accepted CSI frame. Values greater than
                 1 intentionally reduce the output sample rate and must be
                 selected from measured queue/drop and synchronization results.
+    endmenu
+
+    menu "LD2450 radar bridge"
+        depends on VSENSE_NODE_ROLE_LD2450
+
+        config VSENSE_LD2450_UART_PORT
+            int "UART controller number"
+            range 1 2
+            default 2
+
+        config VSENSE_LD2450_UART_BAUD
+            int "UART baud rate"
+            range 9600 460800
+            default 256000
+
+        config VSENSE_LD2450_UART_AUTO_BAUD
+            bool "Automatically detect a changed LD2450 baud rate"
+            default y
+            help
+                Start with VSENSE_LD2450_UART_BAUD, then listen at every baud
+                rate supported by the LD2450 until a valid target frame is
+                received. This changes only the ESP UART rate; it does not
+                write a persistent setting to the radar.
+
+        config VSENSE_LD2450_UART_BAUD_SCAN_INTERVAL_MS
+            int "Automatic baud scan dwell time (ms)"
+            range 500 5000
+            default 1500
+            depends on VSENSE_LD2450_UART_AUTO_BAUD
+            help
+                Time spent listening at each baud rate before trying the next
+                one. A powered LD2450 normally sends about ten frames per
+                second, so 1500 ms leaves ample time to identify a frame.
+
+        config VSENSE_LD2450_UART_RX_GPIO
+            int "ESP32 GPIO receiving radar TX"
+            range 0 48
+            default 16
+
+        config VSENSE_LD2450_UART_TX_GPIO
+            int "ESP32 GPIO transmitting to radar RX"
+            range 0 48
+            default 17
+
+        config VSENSE_LD2450_UART_RX_BUFFER_SIZE
+            int "UART RX buffer size (bytes)"
+            range 256 8192
+            default 2048
+
+        config VSENSE_LD2450_UART_EVENT_QUEUE_SIZE
+            int "UART event queue length"
+            range 4 64
+            default 20
+
+        config VSENSE_LD2450_FRAME_QUEUE_SIZE
+            int "Parsed radar frame queue length"
+            range 4 64
+            default 16
+
+        config VSENSE_LD2450_UART_READ_CHUNK_SIZE
+            int "UART read chunk size (bytes)"
+            range 32 512
+            default 128
+
+        config VSENSE_LD2450_TASK_STACK_SIZE
+            int "Radar task stack size (bytes)"
+            range 3072 8192
+            default 4096
+
+        config VSENSE_LD2450_TASK_PRIORITY
+            int "Radar task priority"
+            range 1 20
+            default 5
+
+        config VSENSE_LD2450_GROUND_TRUTH_TOPIC
+            string "Ground-truth MQTT topic"
+            default "vsense/gt/ld2450_01"
     endmenu
 
 endmenu

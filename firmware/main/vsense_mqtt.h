@@ -9,6 +9,14 @@ void vsense_mqtt_start(void);
 
 bool vsense_mqtt_is_connected(void);
 
+bool vsense_mqtt_publish_message(
+    const char *topic,
+    const char *payload,
+    size_t payload_length,
+    int qos,
+    bool retain
+);
+
 bool vsense_mqtt_publish_health(
     uint64_t uptime_ms,
     uint32_t free_heap,

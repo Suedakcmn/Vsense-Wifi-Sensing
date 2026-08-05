@@ -77,6 +77,57 @@ static void test_empty_frame(void)
     assert(!output.targets[2].present);
 }
 
+static void test_three_targets_and_sign_boundaries(void)
+{
+    uint8_t frame[LD2450_DATA_FRAME_SIZE] = {
+        0xAA, 0xFF, 0x03, 0x00,
+
+        0x7B, 0x80,
+        0xC8, 0x01,
+        0x07, 0x80,
+        0x64, 0x00,
+
+        0x01, 0x00,
+        0xFF, 0xFF,
+        0xFF, 0x7F,
+        0xFF, 0xFF,
+
+        0x2A, 0x80,
+        0x01, 0x00,
+        0x01, 0x80,
+        0x01, 0x00,
+
+        0x55, 0xCC
+    };
+
+    ld2450_frame_t output;
+    assert(ld2450_parse_frame(
+        frame,
+        sizeof(frame),
+        &output
+    ) == LD2450_PARSE_OK);
+
+    assert(output.target_count == 3);
+
+    assert(output.targets[0].present);
+    assert(output.targets[0].x_mm == 123);
+    assert(output.targets[0].y_mm == -456);
+    assert(output.targets[0].speed_cm_s == 7);
+    assert(output.targets[0].resolution_mm == 100);
+
+    assert(output.targets[1].present);
+    assert(output.targets[1].x_mm == -1);
+    assert(output.targets[1].y_mm == 32767);
+    assert(output.targets[1].speed_cm_s == -32767);
+    assert(output.targets[1].resolution_mm == 65535);
+
+    assert(output.targets[2].present);
+    assert(output.targets[2].x_mm == 42);
+    assert(output.targets[2].y_mm == -1);
+    assert(output.targets[2].speed_cm_s == 1);
+    assert(output.targets[2].resolution_mm == 1);
+}
+
 static void test_invalid_length(void)
 {
     ld2450_frame_t output;
@@ -161,6 +212,7 @@ int main(void)
 {
     test_official_example();
     test_empty_frame();
+    test_three_targets_and_sign_boundaries();
     test_invalid_length();
     test_invalid_header();
     test_invalid_footer();
