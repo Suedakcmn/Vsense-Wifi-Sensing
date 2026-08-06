@@ -36,7 +36,7 @@ bool vsense_mqtt_publish_health(
 
 
 bool vsense_mqtt_publish_csi(
-    const char *payload,
+    const void *payload,
     size_t payload_length
 );
 

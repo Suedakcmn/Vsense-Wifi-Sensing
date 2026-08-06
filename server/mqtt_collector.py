@@ -10,6 +10,9 @@ from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
+from vsense_binary import MAGIC as CSI_BINARY_MAGIC
+from vsense_binary import decode_csi_packet
+
 
 def collector_timestamp_us():
     return time.time_ns() // 1_000
@@ -108,11 +111,24 @@ class Collector:
             node_id, message_type = parts[2], "ground_truth"
         else:
             node_id, message_type = parts[1], parts[2]
-        try:
-            payload = json.loads(msg.payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            print(f"Skipping invalid payload on {msg.topic}: {exc}", file=sys.stderr)
-            return
+        if message_type == "csi" and msg.payload.startswith(CSI_BINARY_MAGIC):
+            try:
+                payload = decode_csi_packet(msg.payload)
+            except ValueError as exc:
+                print(
+                    f"Skipping invalid binary CSI on {msg.topic}: {exc}",
+                    file=sys.stderr,
+                )
+                return
+        else:
+            try:
+                payload = json.loads(msg.payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                print(
+                    f"Skipping invalid payload on {msg.topic}: {exc}",
+                    file=sys.stderr,
+                )
+                return
         if not isinstance(payload, dict):
             print(f"Skipping non-object payload on {msg.topic}", file=sys.stderr)
             return

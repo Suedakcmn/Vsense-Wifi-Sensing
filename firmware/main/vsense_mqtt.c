@@ -315,7 +315,7 @@ bool vsense_mqtt_publish_health(
 }
 
 bool vsense_mqtt_publish_csi(
-    const char *payload,
+    const void *payload,
     size_t payload_length
 )
 {
@@ -350,7 +350,7 @@ bool vsense_mqtt_publish_csi(
     int message_id = esp_mqtt_client_publish(
         s_mqtt_client,
         topic,
-        payload,
+        (const char *)payload,
         (int)payload_length,
         0,
         0

@@ -19,6 +19,7 @@
 #include "lwip/sockets.h"
 
 #include "vsense_config.h"
+#include "vsense_binary.h"
 #include "vsense_wifi.h"
 #include "vsense_mqtt.h"
 
@@ -61,6 +62,8 @@ static struct sockaddr_in s_collector_addr;
 #define VSENSE_RX_HEALTH_TASK_STACK_SIZE 6144
 #define VSENSE_CSI_JSON_BUFFER_LEN \
     (VSENSE_CSI_BUFFER_MAX_LEN * 5 + 256)
+#define VSENSE_CSI_BINARY_BUFFER_LEN \
+    (VSENSE_CSI_BINARY_HEADER_SIZE + VSENSE_CSI_BUFFER_MAX_LEN)
 
 _Static_assert(
     VSENSE_CSI_JSON_BUFFER_LEN <= 4096,
@@ -382,8 +385,12 @@ static void vsense_csi_sender_task(void *arg)
 
     vsense_csi_frame_t frame;
     char json_message[VSENSE_CSI_JSON_BUFFER_LEN];
+    uint8_t binary_message[VSENSE_CSI_BINARY_BUFFER_LEN];
 
-    ESP_LOGI(TAG, "Raw CSI sender task started.");
+    ESP_LOGI(
+        TAG,
+        "Raw CSI sender task started; MQTT CSI format=VSCS v1 binary."
+    );
 
     while (true) {
         if (
@@ -437,10 +444,22 @@ static void vsense_csi_sender_task(void *arg)
             s_udp_csi_failed++;
         }
 
+        size_t binary_message_len = vsense_binary_encode_csi(
+            binary_message,
+            sizeof(binary_message),
+            frame.frame_count,
+            (uint64_t)frame.ts_us,
+            frame.rssi,
+            frame.channel,
+            frame.csi,
+            frame.len
+        );
+
         if (
+            binary_message_len > 0 &&
             vsense_mqtt_publish_csi(
-                json_message,
-                (size_t)message_len
+                binary_message,
+                binary_message_len
             )
         ) {
             s_mqtt_csi_published++;
