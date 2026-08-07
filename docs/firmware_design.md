@@ -30,14 +30,30 @@ Project settings are declared in `main/Kconfig.projbuild` and exposed through
 - Wi-Fi SSID, channel, and optional AP BSSID lock;
 - TX packet rate and one/two RX target addresses;
 - optional expected TX MAC filter;
+- optional expected CSI length filter;
 - collector UDP address and MQTT broker;
 - MQTT keepalive and health interval;
 - maximum CSI length;
 - `VSENSE_RAW_SEND_EVERY_N_FRAMES`.
 
-The TX MAC filter is disabled by default. Controlled production recordings may
-enable it after verifying the physical TX station MAC. Filtered frames are
-counted and rate-limited mismatch warnings include the last actual source MAC.
+The global Kconfig default keeps the TX MAC filter disabled so a new or
+replacement TX cannot silently stop CSI collection before its station MAC is
+verified. The tracked `rx_01` and `rx_02` deployment profiles enable the filter
+for controlled sensing runs and use the hardware-verified TX-01 station MAC
+`84:fc:e6:5e:50:24`. Filtered frames are counted and rate-limited mismatch
+warnings include the last actual source MAC.
+
+This separation is intentional: diagnostics can start from the safe global
+default, while dataset collection accepts CSI only from the VSense TX node.
+If TX-01 is replaced, update and re-verify both RX profiles before recording.
+
+The CSI length filter follows the same policy. Its global Kconfig default is
+disabled because valid CSI length depends on the active PHY/channel setup. The
+tracked RX-01 profile enables an expected raw length of 256 bytes, based on the
+5 August RX-01 controlled measurements. RX-02 keeps the length filter disabled
+until its own canary reproduces the same contract. Length mismatches are
+rejected before they can replace the latest sensing snapshot and are reported
+separately from MAC mismatches.
 
 Wi-Fi power save is disabled after `esp_wifi_start()` to reduce CSI arrival
 jitter.
@@ -59,7 +75,8 @@ The CSI callback deliberately performs only bounded work:
 2. update source/channel/RSSI diagnostics;
 3. apply the optional TX MAC filter;
 4. reject and count frames larger than `VSENSE_CSI_BUFFER_MAX_LEN`;
-5. copy the latest valid radio measurement into a protected snapshot.
+5. apply the optional expected CSI length filter;
+6. copy the latest valid radio measurement into a protected snapshot.
 
 Forwarding CSI over UDP/MQTT also generates local Wi-Fi traffic and therefore
 additional CSI callbacks. To prevent that traffic from feeding back into the
@@ -82,6 +99,11 @@ exceeding the 4096-byte MQTT/UDP transport buffers.
 
 Oversized CSI frames are dropped rather than silently truncated. The
 `csi_oversized` and `csi_dropped` health counters make this visible.
+
+Expected-length mismatches are filtered rather than padded or truncated.
+Changing the vector shape could mix incompatible subcarrier layouts and hide a
+PHY/configuration change. `csi_length_filtered` counts these frames, while
+`expected_csi_length` reports the active expected length (`0` when disabled).
 
 ## Sampling and decimation
 
@@ -108,6 +130,7 @@ RX health is logged and published to `vsense/{node_id}/health`. It includes:
 
 - cumulative callback, filtered, accepted, queued, sent, dropped, and
   oversized counts;
+- a separate expected-length filtered count and configured expected length;
 - UDP and MQTT success/failure counts;
 - current queue depth and heap diagnostics;
 - `csi_pps`, the accepted CSI rate during the latest health interval;
@@ -145,5 +168,6 @@ Before accepting a firmware profile:
    transport failure counters do not increase after the collector and broker
    baseline is captured;
 6. test MAC filter disabled, incorrect, and correct configurations;
-7. disconnect one RX and confirm only that node becomes offline;
-8. save the recording under the canonical session naming standard.
+7. test CSI length filtering against both matching and mismatching lengths;
+8. disconnect one RX and confirm only that node becomes offline;
+9. save the recording under the canonical session naming standard.

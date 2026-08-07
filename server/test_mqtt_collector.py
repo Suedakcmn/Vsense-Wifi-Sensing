@@ -5,12 +5,19 @@ import unittest
 from contextlib import redirect_stdout
 
 from mqtt_collector import Collector
+from vsense_binary import encode_csi_packet
 
 
 class Message:
     def __init__(self, topic, payload):
         self.topic = topic
         self.payload = json.dumps(payload).encode()
+
+
+class RawMessage:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.payload = payload
 
 
 class CollectorTest(unittest.TestCase):
@@ -48,6 +55,55 @@ class CollectorTest(unittest.TestCase):
                     self.collector.node_status(node, "offline", "timeout")
             self.collector.node_status("rx_01", "offline", "timeout")
         self.assertEqual([r["status"] for r in self.records()], ["online", "offline"])
+
+    def test_binary_csi_is_normalized_to_the_existing_json_schema(self):
+        binary_payload = encode_csi_packet(
+            frame_count=42,
+            ts_us=123456,
+            rssi=-41,
+            channel=1,
+            csi=[-2, 3, -4, 5],
+        )
+
+        with redirect_stdout(self.output):
+            self.collector.on_message(
+                None,
+                None,
+                RawMessage("vsense/rx_01/csi", binary_payload),
+            )
+
+        csi_record = next(
+            record
+            for record in self.records()
+            if record["message_type"] == "csi"
+        )
+        self.assertEqual(csi_record["node_id"], "rx_01")
+        self.assertEqual(csi_record["frame_count"], 42)
+        self.assertEqual(csi_record["ts_us"], 123456)
+        self.assertEqual(csi_record["rssi"], -41)
+        self.assertEqual(csi_record["channel"], 1)
+        self.assertEqual(csi_record["len"], 4)
+        self.assertEqual(csi_record["csi"], [-2, 3, -4, 5])
+
+    def test_invalid_binary_csi_is_rejected_without_marking_node_online(self):
+        binary_payload = bytearray(encode_csi_packet(
+            frame_count=42,
+            ts_us=123456,
+            rssi=-41,
+            channel=1,
+            csi=[-2, 3],
+        ))
+        binary_payload[4] = 99
+
+        with redirect_stdout(self.output):
+            self.collector.on_message(
+                None,
+                None,
+                RawMessage("vsense/rx_01/csi", bytes(binary_payload)),
+            )
+
+        self.assertEqual(self.records(), [])
+        self.assertNotIn("rx_01", self.collector.last_seen)
 
 
 if __name__ == "__main__":

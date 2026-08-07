@@ -57,6 +57,7 @@ Use `VSense node configuration` to review:
 - MQTT broker URI
 - MQTT keepalive interval
 - TX MAC filter
+- expected CSI length filter
 - CSI maximum buffer length
 - CSI forwarding interval
 - TX target IP addresses
@@ -139,17 +140,21 @@ Exit the monitor with `Ctrl+]`.
 
 ## Expected Logs
 
-RX startup:
+Validated RX-01 canary startup:
 
 ```text
 Node ID: rx_01
 Configured role: RX
 Wi-Fi connected.
 IP address: 192.168.128.x
-CSI TX MAC filter is disabled.
+CSI TX MAC filter enabled: 84:fc:e6:5e:50:24
+CSI length filter enabled: expected=256 bytes.
 CSI collection enabled.
 CSI forwarding every 1 accepted frame(s); max_len=384 queue=128.
 ```
+
+RX-02 should report `CSI length filter is disabled.` until its own canary has
+verified the expected length and transport counters.
 
 TX startup:
 
@@ -189,18 +194,45 @@ watchdog. It is independent of the 30-second MQTT keepalive.
 
 ## TX MAC Filter Verification
 
-The RX profiles keep the TX MAC filter disabled by default. This prevents an
-incorrect or replaced TX MAC from silently stopping collection.
+The global Kconfig default keeps the TX MAC filter disabled. This prevents an
+incorrect or replaced TX MAC from silently stopping first-boot diagnostics.
+The tracked RX-01 and RX-02 deployment profiles enable the filter with the
+hardware-verified TX-01 MAC `84:fc:e6:5e:50:24` so unrelated Wi-Fi traffic does
+not enter controlled sensing recordings.
 
-1. Boot once with the filter disabled and confirm CSI arrives.
+1. For a new or replacement TX, boot once with the global filter default and
+   confirm CSI arrives.
 2. Verify the TX station MAC from the hardware/router rather than guessing.
-3. Enable the filter only for controlled sensing recordings.
+3. Put the verified MAC in both RX profiles and enable the filter for
+   controlled sensing recordings.
 4. Flash with a deliberately incorrect MAC once and confirm `csi_filtered`
    rises and a rate-limited `TX MAC mismatch` warning is printed.
 5. Restore the verified MAC and confirm `csi_received` and `csi_pps` recover.
 
-When disabled, unrelated Wi-Fi traffic can enter the raw CSI path. Keep the
-environment controlled or enable the verified filter for final experiments.
+When disabled, unrelated Wi-Fi traffic can overwrite the latest CSI snapshot
+before a TX UDP probe consumes it. Use the disabled mode for diagnostics, not
+for final experiments or dataset collection.
+
+## CSI Length Filter Verification
+
+The global length-filter default is disabled because CSI length depends on the
+PHY/channel configuration. The tracked RX-01 profile uses the measured BW20
+setup and accepts 256 raw CSI bytes. RX-02 remains disabled until the same
+measurement and canary sequence is completed on that physical receiver.
+
+1. Verify MAC filtering first so unrelated transmitters cannot affect the
+   length distribution.
+2. Record at least 2,000 filtered CSI messages and group them by raw `len`.
+3. Enable `CONFIG_VSENSE_CSI_LENGTH_FILTER_ENABLED=y` only after one length is
+   confirmed as the sensing contract.
+4. Confirm `csi_length_filtered` rises when a mismatching frame is observed,
+   while `csi_dropped` and transport-failure counters stay stable.
+5. Confirm published CSI messages all have the configured length.
+6. Repeat the complete sequence independently before enabling the filter in a
+   second RX profile.
+
+Do not pad or truncate mismatching frames. Re-measure and update the profile if
+the Wi-Fi PHY, channel width, CSI LTF configuration, or TX hardware changes.
 
 ## Full-Rate Verification
 

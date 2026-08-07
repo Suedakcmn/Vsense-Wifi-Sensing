@@ -3,6 +3,7 @@ idf_component_register(
         "app_main.c"
         "role_tx.c"
         "role_rx.c"
+        "vsense_binary.c"
         "vsense_wifi.c"
         "vsense_mqtt.c"
     INCLUDE_DIRS
