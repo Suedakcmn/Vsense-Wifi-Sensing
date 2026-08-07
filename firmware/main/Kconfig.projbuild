@@ -140,6 +140,24 @@ menu "VSense node configuration"
                 Maximum raw CSI bytes stored per frame. The upper bound keeps
                 the JSON payload within the configured MQTT and UDP buffers.
 
+        config VSENSE_CSI_LENGTH_FILTER_ENABLED
+            bool "Filter CSI frames by expected length"
+            default n
+            help
+                Accept only CSI frames whose raw byte length matches the
+                configured value. Keep this disabled until the expected
+                length has been measured for the active PHY/channel setup.
+
+        config VSENSE_CSI_EXPECTED_LEN
+            int "Expected CSI frame length"
+            range 2 384
+            default 256
+            depends on VSENSE_CSI_LENGTH_FILTER_ENABLED
+            help
+                Expected raw CSI byte length for controlled sensing runs.
+                This must be an even value no larger than the configured
+                maximum CSI buffer length.
+
         config VSENSE_RAW_SEND_EVERY_N_FRAMES
             int "Forward every Nth accepted CSI frame"
             range 1 100

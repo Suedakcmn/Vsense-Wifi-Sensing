@@ -19,6 +19,7 @@
 #include "lwip/sockets.h"
 
 #include "vsense_config.h"
+#include "vsense_binary.h"
 #include "vsense_wifi.h"
 #include "vsense_mqtt.h"
 
@@ -26,6 +27,7 @@ static const char *TAG = "VSENSE_RX";
 static QueueHandle_t s_csi_queue = NULL;
 static volatile uint32_t s_csi_callbacks_total = 0;
 static volatile uint32_t s_csi_frames_filtered = 0;
+static volatile uint32_t s_csi_frames_length_filtered = 0;
 static volatile uint32_t s_csi_frames_received = 0;
 static volatile uint32_t s_csi_frames_queued = 0;
 static volatile uint32_t s_csi_frames_sent = 0;
@@ -34,6 +36,7 @@ static volatile uint32_t s_csi_frames_oversized = 0;
 static volatile uint32_t s_csi_frames_processed = 0;
 static volatile uint8_t s_last_csi_source_mac[6] = {0};
 static volatile uint8_t s_last_mismatched_mac[6] = {0};
+static volatile uint16_t s_last_mismatched_csi_length = 0;
 static volatile uint8_t s_last_csi_channel = 0;
 static volatile int8_t s_last_csi_callback_rssi = 0;
 
@@ -59,11 +62,24 @@ static struct sockaddr_in s_collector_addr;
 #define VSENSE_RX_HEALTH_TASK_STACK_SIZE 6144
 #define VSENSE_CSI_JSON_BUFFER_LEN \
     (VSENSE_CSI_BUFFER_MAX_LEN * 5 + 256)
+#define VSENSE_CSI_BINARY_BUFFER_LEN \
+    (VSENSE_CSI_BINARY_HEADER_SIZE + VSENSE_CSI_BUFFER_MAX_LEN)
 
 _Static_assert(
     VSENSE_CSI_JSON_BUFFER_LEN <= 4096,
     "CSI JSON buffer exceeds the configured MQTT/UDP transport buffer."
 );
+
+#if VSENSE_CSI_LENGTH_FILTER_ENABLED
+_Static_assert(
+    VSENSE_CSI_EXPECTED_LEN <= VSENSE_CSI_BUFFER_MAX_LEN,
+    "Expected CSI length exceeds the configured CSI buffer."
+);
+_Static_assert(
+    (VSENSE_CSI_EXPECTED_LEN % 2) == 0,
+    "Expected CSI length must contain complete complex-value pairs."
+);
+#endif
 
 typedef struct {
     int64_t ts_us;
@@ -95,6 +111,7 @@ static void vsense_rx_health_task(void *arg)
     uint32_t previous_csi_received = s_csi_frames_received;
     uint32_t previous_csi_queued = s_csi_frames_queued;
     uint32_t last_mac_warning_count = 0;
+    uint32_t last_length_warning_count = 0;
 
     while (true) {
         uint64_t now_us = (uint64_t)esp_timer_get_time();
@@ -147,6 +164,7 @@ static void vsense_rx_health_task(void *arg)
             "udp_packets=%lu "
             "csi_callbacks=%lu "
             "csi_filtered=%lu "
+            "csi_length_filtered=%lu "
             "csi_received=%lu "
             "csi_queued=%lu "
             "csi_sent=%lu "
@@ -159,6 +177,7 @@ static void vsense_rx_health_task(void *arg)
             "csi_dropped=%lu "
             "csi_oversized=%lu "
             "queue_depth=%u "
+            "expected_csi_length=%d "
             "raw_send_every_n_frames=%d "
             "last_csi_source=%02x:%02x:%02x:%02x:%02x:%02x "
             "last_csi_channel=%u "
@@ -171,6 +190,7 @@ static void vsense_rx_health_task(void *arg)
             (unsigned long)s_udp_packets_received,
             (unsigned long)s_csi_callbacks_total,
             (unsigned long)s_csi_frames_filtered,
+            (unsigned long)s_csi_frames_length_filtered,
             (unsigned long)s_csi_frames_received,
             (unsigned long)s_csi_frames_queued,
             (unsigned long)s_csi_frames_sent,
@@ -183,6 +203,7 @@ static void vsense_rx_health_task(void *arg)
             (unsigned long)s_csi_frames_dropped,
             (unsigned long)s_csi_frames_oversized,
             (unsigned int)queue_depth,
+            VSENSE_CSI_EXPECTED_LEN,
             VSENSE_RAW_SEND_EVERY_N_FRAMES,
             (unsigned int)s_last_csi_source_mac[0],
             (unsigned int)s_last_csi_source_mac[1],
@@ -220,6 +241,28 @@ static void vsense_rx_health_task(void *arg)
         (void)last_mac_warning_count;
 #endif
 
+#if VSENSE_CSI_LENGTH_FILTER_ENABLED
+        if (
+            s_csi_frames_length_filtered > last_length_warning_count &&
+            (
+                last_length_warning_count == 0 ||
+                s_csi_frames_length_filtered - last_length_warning_count >= 10
+            )
+        ) {
+            ESP_LOGW(
+                TAG,
+                "CSI length mismatch: expected=%d last_actual=%u "
+                "filtered=%lu",
+                VSENSE_CSI_EXPECTED_LEN,
+                (unsigned int)s_last_mismatched_csi_length,
+                (unsigned long)s_csi_frames_length_filtered
+            );
+            last_length_warning_count = s_csi_frames_length_filtered;
+        }
+#else
+        (void)last_length_warning_count;
+#endif
+
         (void)vsense_mqtt_publish_health(
             uptime_ms,
             free_heap,
@@ -227,6 +270,7 @@ static void vsense_rx_health_task(void *arg)
             s_udp_packets_received,
             s_csi_callbacks_total,
             s_csi_frames_filtered,
+            s_csi_frames_length_filtered,
             s_csi_frames_received,
             s_csi_frames_queued,
             s_csi_frames_sent,
@@ -239,6 +283,7 @@ static void vsense_rx_health_task(void *arg)
             s_csi_frames_dropped,
             s_csi_frames_oversized,
             (uint32_t)queue_depth,
+            VSENSE_CSI_EXPECTED_LEN,
             VSENSE_RAW_SEND_EVERY_N_FRAMES,
             s_last_rssi
         );
@@ -340,8 +385,12 @@ static void vsense_csi_sender_task(void *arg)
 
     vsense_csi_frame_t frame;
     char json_message[VSENSE_CSI_JSON_BUFFER_LEN];
+    uint8_t binary_message[VSENSE_CSI_BINARY_BUFFER_LEN];
 
-    ESP_LOGI(TAG, "Raw CSI sender task started.");
+    ESP_LOGI(
+        TAG,
+        "Raw CSI sender task started; MQTT CSI format=VSCS v1 binary."
+    );
 
     while (true) {
         if (
@@ -395,10 +444,22 @@ static void vsense_csi_sender_task(void *arg)
             s_udp_csi_failed++;
         }
 
+        size_t binary_message_len = vsense_binary_encode_csi(
+            binary_message,
+            sizeof(binary_message),
+            frame.frame_count,
+            (uint64_t)frame.ts_us,
+            frame.rssi,
+            frame.channel,
+            frame.csi,
+            frame.len
+        );
+
         if (
+            binary_message_len > 0 &&
             vsense_mqtt_publish_csi(
-                json_message,
-                (size_t)message_len
+                binary_message,
+                binary_message_len
             )
         ) {
             s_mqtt_csi_published++;
@@ -591,6 +652,20 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
     }
 #endif
 
+    if (data->len > VSENSE_CSI_BUFFER_MAX_LEN) {
+        s_csi_frames_oversized++;
+        s_csi_frames_dropped++;
+        return;
+    }
+
+#if VSENSE_CSI_LENGTH_FILTER_ENABLED
+    if (data->len != VSENSE_CSI_EXPECTED_LEN) {
+        s_csi_frames_length_filtered++;
+        s_last_mismatched_csi_length = (uint16_t)data->len;
+        return;
+    }
+#endif
+
     vsense_csi_frame_t frame = {
         .ts_us = esp_timer_get_time(),
         .frame_count = 0,
@@ -598,12 +673,6 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
         .channel = data->rx_ctrl.channel,
         .len = 0,
     };
-
-    if (data->len > VSENSE_CSI_BUFFER_MAX_LEN) {
-        s_csi_frames_oversized++;
-        s_csi_frames_dropped++;
-        return;
-    }
 
     frame.len = (uint16_t)data->len;
     memcpy(frame.csi, data->buf, frame.len);
@@ -623,6 +692,16 @@ static void vsense_rx_csi_init(void)
         );
         return;
     }
+
+#if VSENSE_CSI_LENGTH_FILTER_ENABLED
+    ESP_LOGI(
+        TAG,
+        "CSI length filter enabled: expected=%d bytes.",
+        VSENSE_CSI_EXPECTED_LEN
+    );
+#else
+    ESP_LOGW(TAG, "CSI length filter is disabled.");
+#endif
 
     wifi_csi_config_t csi_config = {
         .lltf_en = true,

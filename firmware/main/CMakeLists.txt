@@ -7,6 +7,7 @@ idf_component_register(
         "ld2450_parser.c"
         "ld2450_stream.c"
         "ld2450_json.c"
+        "vsense_binary.c"
         "vsense_wifi.c"
         "vsense_mqtt.c"
     INCLUDE_DIRS
