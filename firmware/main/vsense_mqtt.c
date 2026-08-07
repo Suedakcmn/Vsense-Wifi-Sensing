@@ -171,6 +171,36 @@ bool vsense_mqtt_is_connected(void)
     return s_mqtt_connected;
 }
 
+bool vsense_mqtt_publish_message(
+    const char *topic,
+    const char *payload,
+    size_t payload_length,
+    int qos,
+    bool retain
+)
+{
+    if (
+        topic == NULL ||
+        payload == NULL ||
+        payload_length == 0 ||
+        s_mqtt_client == NULL ||
+        !s_mqtt_connected
+    ) {
+        return false;
+    }
+
+    int message_id = esp_mqtt_client_publish(
+        s_mqtt_client,
+        topic,
+        payload,
+        (int)payload_length,
+        qos,
+        retain ? 1 : 0
+    );
+
+    return message_id >= 0;
+}
+
 bool vsense_mqtt_publish_health(
     uint64_t uptime_ms,
     uint32_t free_heap,

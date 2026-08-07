@@ -144,8 +144,7 @@ offline after five seconds without CSI, health, or status traffic.
 ## Timestamps and synchronization
 
 Firmware `ts_us` comes from `esp_timer_get_time()` and is device uptime. It is
-not directly comparable between RX nodes or with an LD2450 connected to the
-Mac.
+not directly comparable between RX nodes or with the separate LD2450 bridge.
 
 Both MQTT and UDP collectors add:
 
@@ -154,7 +153,10 @@ Both MQTT and UDP collectors add:
 
 Use `collector_ts_us` as the initial common timebase for multi-RX/radar
 alignment. Keep firmware `ts_us` for device-local interval and jitter analysis.
-Network and serial latency still need to be measured during LD2450 validation.
+The 7 August RX1/LD2450 validation measured a 16.065 ms median, 46.969 ms p95,
+and 61.438 ms p99 nearest-message offset; see
+`experiments/2026-08-07-ld2450-rx1-validation.md`. Rare transport gaps still
+need to be flagged by the Week 6 data-quality checks.
 
 ## Required hardware verification
 
