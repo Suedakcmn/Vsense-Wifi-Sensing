@@ -26,6 +26,8 @@ Standard scenario names:
 - `hand_movement`
 - `entry_exit`
 - `mixed`
+- `multi_rx`
+- `rate_verify`
 
 ## File Names
 
@@ -38,6 +40,14 @@ Use a suffix to identify the contents of each file:
 ```
 
 Do not mix raw CSI packets and detected events in the same JSONL file.
+
+### Legacy pilot exception
+
+The tracked files `empty_room.jsonl`, `hand_movement.jsonl`, `walking.jsonl`,
+and `test_raw_csi.jsonl` predate this convention. Their original wall-clock
+time, location, and repeat number were not recorded, so they remain unchanged
+rather than receiving invented metadata. Treat them as read-only legacy pilot
+fixtures. Every new recording must follow the canonical session ID format.
 
 ## Detected Event Schema
 

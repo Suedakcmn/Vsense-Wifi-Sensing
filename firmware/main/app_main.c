@@ -13,7 +13,7 @@ static const char *TAG = "VSENSE_APP";
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "VSense firmware skeleton starting...");
+    ESP_LOGI(TAG, "VSense firmware starting...");
     ESP_LOGI(TAG, "Node ID: %s", VSENSE_NODE_ID);
     ESP_LOGI(TAG, "Configured role: %s", VSENSE_NODE_ROLE);
     ESP_LOGI(TAG, "Wi-Fi channel: %d", VSENSE_WIFI_CHANNEL);

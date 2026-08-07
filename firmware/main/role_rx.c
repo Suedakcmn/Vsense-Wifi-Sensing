@@ -1,4 +1,5 @@
 #include "role_rx.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -23,11 +24,18 @@
 
 static const char *TAG = "VSENSE_RX";
 static QueueHandle_t s_csi_queue = NULL;
+static volatile uint32_t s_csi_callbacks_total = 0;
+static volatile uint32_t s_csi_frames_filtered = 0;
 static volatile uint32_t s_csi_frames_received = 0;
 static volatile uint32_t s_csi_frames_queued = 0;
 static volatile uint32_t s_csi_frames_sent = 0;
 static volatile uint32_t s_csi_frames_dropped = 0;
+static volatile uint32_t s_csi_frames_oversized = 0;
 static volatile uint32_t s_csi_frames_processed = 0;
+static volatile uint8_t s_last_csi_source_mac[6] = {0};
+static volatile uint8_t s_last_mismatched_mac[6] = {0};
+static volatile uint8_t s_last_csi_channel = 0;
+static volatile int8_t s_last_csi_callback_rssi = 0;
 
 static volatile uint32_t s_udp_csi_sent = 0;
 static volatile uint32_t s_udp_csi_failed = 0;
@@ -44,9 +52,18 @@ static struct sockaddr_in s_collector_addr;
 
 
 
-#define VSENSE_MAX_CSI_LEN 256
-#define VSENSE_CSI_QUEUE_LENGTH 8
-#define VSENSE_RAW_SEND_EVERY_N_FRAMES 10
+#define VSENSE_CSI_QUEUE_LENGTH 128
+#define VSENSE_CSI_QUEUE_SEND_TIMEOUT_MS 5
+#define VSENSE_CSI_SENDER_TASK_STACK_SIZE 6144
+#define VSENSE_CSI_SENDER_TASK_PRIORITY 6
+#define VSENSE_RX_HEALTH_TASK_STACK_SIZE 6144
+#define VSENSE_CSI_JSON_BUFFER_LEN \
+    (VSENSE_CSI_BUFFER_MAX_LEN * 5 + 256)
+
+_Static_assert(
+    VSENSE_CSI_JSON_BUFFER_LEN <= 4096,
+    "CSI JSON buffer exceeds the configured MQTT/UDP transport buffer."
+);
 
 typedef struct {
     int64_t ts_us;
@@ -54,8 +71,18 @@ typedef struct {
     int8_t rssi;
     uint8_t channel;
     uint16_t len;
-    int8_t csi[VSENSE_MAX_CSI_LEN];
+    int8_t csi[VSENSE_CSI_BUFFER_MAX_LEN];
 } vsense_csi_frame_t;
+
+/*
+ * CSI callbacks also fire for Wi-Fi traffic created by forwarding CSI over
+ * UDP/MQTT. Queuing every callback therefore creates a feedback loop. Keep
+ * only the latest radio measurement here; the UDP probe receiver consumes at
+ * most one fresh measurement for each packet sent by the VSense TX node.
+ */
+static portMUX_TYPE s_latest_csi_lock = portMUX_INITIALIZER_UNLOCKED;
+static vsense_csi_frame_t s_latest_csi_frame;
+static uint32_t s_latest_csi_generation = 0;
 
 
 static void vsense_rx_health_task(void *arg)
@@ -64,10 +91,39 @@ static void vsense_rx_health_task(void *arg)
 
     ESP_LOGI(TAG, "RX health telemetry task started.");
 
+    uint64_t previous_health_us = (uint64_t)esp_timer_get_time();
+    uint32_t previous_csi_received = s_csi_frames_received;
+    uint32_t previous_csi_queued = s_csi_frames_queued;
+    uint32_t last_mac_warning_count = 0;
+
     while (true) {
-        uint64_t uptime_ms = (uint64_t)(
-            esp_timer_get_time() / 1000
-        );
+        uint64_t now_us = (uint64_t)esp_timer_get_time();
+        uint64_t uptime_ms = now_us / 1000;
+        uint64_t elapsed_us = now_us - previous_health_us;
+
+        uint32_t csi_pps = 0;
+        uint32_t csi_forwarded_pps = 0;
+
+        if (elapsed_us > 0) {
+            csi_pps = (uint32_t)(
+                (
+                    (uint64_t)(
+                        s_csi_frames_received - previous_csi_received
+                    ) * 1000000ULL + elapsed_us / 2
+                ) / elapsed_us
+            );
+            csi_forwarded_pps = (uint32_t)(
+                (
+                    (uint64_t)(
+                        s_csi_frames_queued - previous_csi_queued
+                    ) * 1000000ULL + elapsed_us / 2
+                ) / elapsed_us
+            );
+        }
+
+        previous_health_us = now_us;
+        previous_csi_received = s_csi_frames_received;
+        previous_csi_queued = s_csi_frames_queued;
 
         uint32_t free_heap = esp_get_free_heap_size();
         uint32_t minimum_free_heap =
@@ -89,47 +145,101 @@ static void vsense_rx_health_task(void *arg)
             "free_heap=%lu "
             "minimum_free_heap=%lu "
             "udp_packets=%lu "
+            "csi_callbacks=%lu "
+            "csi_filtered=%lu "
             "csi_received=%lu "
             "csi_queued=%lu "
             "csi_sent=%lu "
+            "csi_pps=%lu "
+            "csi_forwarded_pps=%lu "
             "udp_csi_sent=%lu "
             "udp_csi_failed=%lu "
             "mqtt_csi_published=%lu "
             "mqtt_csi_failed=%lu "
             "csi_dropped=%lu "
+            "csi_oversized=%lu "
             "queue_depth=%u "
+            "raw_send_every_n_frames=%d "
+            "last_csi_source=%02x:%02x:%02x:%02x:%02x:%02x "
+            "last_csi_channel=%u "
+            "last_csi_callback_rssi=%d "
             "last_rssi=%d",
             VSENSE_NODE_ID,
             (unsigned long long)uptime_ms,
             (unsigned long)free_heap,
             (unsigned long)minimum_free_heap,
             (unsigned long)s_udp_packets_received,
+            (unsigned long)s_csi_callbacks_total,
+            (unsigned long)s_csi_frames_filtered,
             (unsigned long)s_csi_frames_received,
             (unsigned long)s_csi_frames_queued,
             (unsigned long)s_csi_frames_sent,
+            (unsigned long)csi_pps,
+            (unsigned long)csi_forwarded_pps,
             (unsigned long)s_udp_csi_sent,
             (unsigned long)s_udp_csi_failed,
             (unsigned long)s_mqtt_csi_published,
             (unsigned long)s_mqtt_csi_failed,
             (unsigned long)s_csi_frames_dropped,
+            (unsigned long)s_csi_frames_oversized,
             (unsigned int)queue_depth,
+            VSENSE_RAW_SEND_EVERY_N_FRAMES,
+            (unsigned int)s_last_csi_source_mac[0],
+            (unsigned int)s_last_csi_source_mac[1],
+            (unsigned int)s_last_csi_source_mac[2],
+            (unsigned int)s_last_csi_source_mac[3],
+            (unsigned int)s_last_csi_source_mac[4],
+            (unsigned int)s_last_csi_source_mac[5],
+            (unsigned int)s_last_csi_channel,
+            (int)s_last_csi_callback_rssi,
             (int)s_last_rssi
         );
+
+#if VSENSE_TX_MAC_FILTER_ENABLED
+        if (
+            s_csi_frames_filtered - last_mac_warning_count >= 500
+        ) {
+            ESP_LOGW(
+                TAG,
+                "TX MAC mismatch: "
+                "expected=%s "
+                "last_actual=%02x:%02x:%02x:%02x:%02x:%02x "
+                "filtered=%lu",
+                VSENSE_TX_MAC,
+                (unsigned int)s_last_mismatched_mac[0],
+                (unsigned int)s_last_mismatched_mac[1],
+                (unsigned int)s_last_mismatched_mac[2],
+                (unsigned int)s_last_mismatched_mac[3],
+                (unsigned int)s_last_mismatched_mac[4],
+                (unsigned int)s_last_mismatched_mac[5],
+                (unsigned long)s_csi_frames_filtered
+            );
+            last_mac_warning_count = s_csi_frames_filtered;
+        }
+#else
+        (void)last_mac_warning_count;
+#endif
 
         (void)vsense_mqtt_publish_health(
             uptime_ms,
             free_heap,
             minimum_free_heap,
             s_udp_packets_received,
+            s_csi_callbacks_total,
+            s_csi_frames_filtered,
             s_csi_frames_received,
             s_csi_frames_queued,
             s_csi_frames_sent,
+            csi_pps,
+            csi_forwarded_pps,
             s_udp_csi_sent,
             s_udp_csi_failed,
             s_mqtt_csi_published,
             s_mqtt_csi_failed,
             s_csi_frames_dropped,
+            s_csi_frames_oversized,
             (uint32_t)queue_depth,
+            VSENSE_RAW_SEND_EVERY_N_FRAMES,
             s_last_rssi
         );
 
@@ -229,7 +339,7 @@ static void vsense_csi_sender_task(void *arg)
     (void)arg;
 
     vsense_csi_frame_t frame;
-    char json_message[2048];
+    char json_message[VSENSE_CSI_JSON_BUFFER_LEN];
 
     ESP_LOGI(TAG, "Raw CSI sender task started.");
 
@@ -315,9 +425,146 @@ static void vsense_csi_sender_task(void *arg)
     }
 }
 
-static const uint8_t s_tx_mac[6] = {
-    0xE0, 0x72, 0xA1, 0xF3, 0xBF, 0xF0
-};
+#if VSENSE_TX_MAC_FILTER_ENABLED
+static uint8_t s_tx_mac[6];
+#endif
+
+static bool vsense_rx_tx_mac_filter_init(void)
+{
+#if VSENSE_TX_MAC_FILTER_ENABLED
+    unsigned int parsed_mac[6];
+    char trailing_character;
+
+    int parsed_fields = sscanf(
+        VSENSE_TX_MAC,
+        "%2x:%2x:%2x:%2x:%2x:%2x%c",
+        &parsed_mac[0],
+        &parsed_mac[1],
+        &parsed_mac[2],
+        &parsed_mac[3],
+        &parsed_mac[4],
+        &parsed_mac[5],
+        &trailing_character
+    );
+
+    if (
+        parsed_fields != 6 ||
+        strlen(VSENSE_TX_MAC) != 17
+    ) {
+        ESP_LOGE(
+            TAG,
+            "Invalid TX MAC configuration: %s",
+            VSENSE_TX_MAC
+        );
+        return false;
+    }
+
+    for (size_t i = 0; i < sizeof(s_tx_mac); i++) {
+        if (parsed_mac[i] > UINT8_MAX) {
+            ESP_LOGE(
+                TAG,
+                "TX MAC byte is out of range: %s",
+                VSENSE_TX_MAC
+            );
+            return false;
+        }
+
+        s_tx_mac[i] = (uint8_t)parsed_mac[i];
+    }
+
+    ESP_LOGI(
+        TAG,
+        "CSI TX MAC filter enabled: %s",
+        VSENSE_TX_MAC
+    );
+#else
+    ESP_LOGW(
+        TAG,
+        "CSI TX MAC filter is disabled."
+    );
+#endif
+
+    return true;
+}
+
+static bool vsense_rx_queue_latest_csi_for_probe(
+    uint32_t *last_consumed_generation
+)
+{
+    if (
+        last_consumed_generation == NULL ||
+        s_csi_queue == NULL
+    ) {
+        return false;
+    }
+
+    vsense_csi_frame_t frame;
+    uint32_t generation;
+
+    portENTER_CRITICAL(&s_latest_csi_lock);
+    generation = s_latest_csi_generation;
+
+    if (
+        generation != 0 &&
+        generation != *last_consumed_generation
+    ) {
+        frame = s_latest_csi_frame;
+    }
+
+    portEXIT_CRITICAL(&s_latest_csi_lock);
+
+    if (
+        generation == 0 ||
+        generation == *last_consumed_generation
+    ) {
+        return false;
+    }
+
+    *last_consumed_generation = generation;
+    s_csi_frames_received++;
+    s_last_rssi = frame.rssi;
+    frame.frame_count = s_csi_frames_received;
+
+    if (
+        (s_csi_frames_received % VSENSE_RAW_SEND_EVERY_N_FRAMES)
+        != 0
+    ) {
+        return true;
+    }
+
+    /*
+     * This runs in the UDP probe task, not in the Wi-Fi CSI callback. A short
+     * bounded wait lets the higher-priority sender drain transient bursts
+     * without blocking the radio callback or silently losing a sample.
+     */
+    if (
+        xQueueSend(
+            s_csi_queue,
+            &frame,
+            pdMS_TO_TICKS(VSENSE_CSI_QUEUE_SEND_TIMEOUT_MS)
+        ) == pdTRUE
+    ) {
+        s_csi_frames_queued++;
+    } else {
+        s_csi_frames_dropped++;
+    }
+
+    if ((s_csi_frames_received % 1000) == 0) {
+        ESP_LOGI(
+            TAG,
+            "CSI probe-matched=%lu queued=%lu sent=%lu "
+            "dropped=%lu len=%u rssi=%d",
+            (unsigned long)s_csi_frames_received,
+            (unsigned long)s_csi_frames_queued,
+            (unsigned long)s_csi_frames_sent,
+            (unsigned long)s_csi_frames_dropped,
+            frame.len,
+            frame.rssi
+        );
+    }
+
+    return true;
+}
 
 static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
 {
@@ -327,57 +574,56 @@ static void vsense_rx_csi_callback(void *ctx, wifi_csi_info_t *data)
         return;
     }
 
-    // Yalnızca VSense TX kartından gelen CSI framelerini işle.
+    s_csi_callbacks_total++;
+    memcpy((void *)s_last_csi_source_mac, data->mac, sizeof(s_last_csi_source_mac));
+    s_last_csi_channel = data->rx_ctrl.channel;
+    s_last_csi_callback_rssi = data->rx_ctrl.rssi;
+
+#if VSENSE_TX_MAC_FILTER_ENABLED
     if (memcmp(data->mac, s_tx_mac, sizeof(s_tx_mac)) != 0) {
+        s_csi_frames_filtered++;
+        memcpy(
+            (void *)s_last_mismatched_mac,
+            data->mac,
+            sizeof(s_last_mismatched_mac)
+        );
         return;
     }
-
-    
-
-    s_csi_frames_received++;
-    s_last_rssi = data->rx_ctrl.rssi;
-
-    if ((s_csi_frames_received % VSENSE_RAW_SEND_EVERY_N_FRAMES) != 0) {
-        return;
-    }
+#endif
 
     vsense_csi_frame_t frame = {
         .ts_us = esp_timer_get_time(),
-        .frame_count = s_csi_frames_received,
+        .frame_count = 0,
         .rssi = data->rx_ctrl.rssi,
         .channel = data->rx_ctrl.channel,
         .len = 0,
     };
 
-    frame.len = (uint16_t)data->len;
-
-    if (frame.len > VSENSE_MAX_CSI_LEN) {
-        frame.len = VSENSE_MAX_CSI_LEN;
+    if (data->len > VSENSE_CSI_BUFFER_MAX_LEN) {
+        s_csi_frames_oversized++;
+        s_csi_frames_dropped++;
+        return;
     }
+
+    frame.len = (uint16_t)data->len;
     memcpy(frame.csi, data->buf, frame.len);
 
-    if (xQueueSend(s_csi_queue, &frame, 0) == pdTRUE) {
-        s_csi_frames_queued++;
-    } else {
-        s_csi_frames_dropped++;
-    }
-
-    if ((s_csi_frames_received % 1000) == 0) {
-        ESP_LOGI(
-            TAG,
-            "CSI received=%lu queued=%lu sent=%lu dropped=%lu len=%u rssi=%d",
-            (unsigned long)s_csi_frames_received,
-            (unsigned long)s_csi_frames_queued,
-            (unsigned long)s_csi_frames_sent,
-            (unsigned long)s_csi_frames_dropped,
-            frame.len,
-            frame.rssi
-        );
-    }
+    portENTER_CRITICAL(&s_latest_csi_lock);
+    s_latest_csi_frame = frame;
+    s_latest_csi_generation++;
+    portEXIT_CRITICAL(&s_latest_csi_lock);
 }
 
 static void vsense_rx_csi_init(void)
 {
+    if (!vsense_rx_tx_mac_filter_init()) {
+        ESP_LOGE(
+            TAG,
+            "CSI disabled because the TX MAC filter is invalid."
+        );
+        return;
+    }
+
     wifi_csi_config_t csi_config = {
         .lltf_en = true,
         .htltf_en = true,
@@ -419,6 +665,13 @@ static void vsense_rx_csi_init(void)
     }
 
     ESP_LOGI(TAG, "CSI collection enabled.");
+    ESP_LOGI(
+        TAG,
+        "CSI forwarding every %d accepted frame(s); max_len=%d queue=%d.",
+        VSENSE_RAW_SEND_EVERY_N_FRAMES,
+        VSENSE_CSI_BUFFER_MAX_LEN,
+        VSENSE_CSI_QUEUE_LENGTH
+    );
 }
 
 static void vsense_rx_udp_task(void *arg)
@@ -443,9 +696,9 @@ static void vsense_rx_udp_task(void *arg)
     BaseType_t task_created = xTaskCreate(
         vsense_csi_sender_task,
         "csi_sender",
-        6144,
+        VSENSE_CSI_SENDER_TASK_STACK_SIZE,
         NULL,
-        5,
+        VSENSE_CSI_SENDER_TASK_PRIORITY,
         NULL
     );
 
@@ -461,7 +714,7 @@ static void vsense_rx_udp_task(void *arg)
     BaseType_t health_task_created = xTaskCreate(
         vsense_rx_health_task,
         "rx_health",
-        3072,
+        VSENSE_RX_HEALTH_TASK_STACK_SIZE,
         NULL,
         3,
         NULL
@@ -501,6 +754,7 @@ static void vsense_rx_udp_task(void *arg)
     ESP_LOGI(TAG, "RX UDP server listening on port %d.", VSENSE_RX_UDP_PORT);
 
     uint32_t last_logged_count = 0;
+    uint32_t last_consumed_csi_generation = 0;
 
     while (1) {
         char rx_buffer[128];
@@ -524,6 +778,9 @@ static void vsense_rx_udp_task(void *arg)
 
         rx_buffer[len] = '\0';
         s_udp_packets_received++;
+        (void)vsense_rx_queue_latest_csi_for_probe(
+            &last_consumed_csi_generation
+        );
 
         if ((s_udp_packets_received - last_logged_count) >= 100) {
             ESP_LOGI(

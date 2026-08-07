@@ -1,5 +1,8 @@
 #include "vsense_wifi.h"
 
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -18,6 +21,39 @@ static const char *TAG = "VSENSE_WIFI";
 static EventGroupHandle_t s_wifi_event_group;
 static const int WIFI_CONNECTED_BIT = BIT0;
 static int s_retry_num = 0;
+
+#if VSENSE_WIFI_BSSID_LOCK_ENABLED
+static bool vsense_wifi_parse_bssid(uint8_t bssid[6])
+{
+    unsigned int parsed[6];
+    char trailing_character;
+
+    int parsed_fields = sscanf(
+        VSENSE_WIFI_BSSID,
+        "%2x:%2x:%2x:%2x:%2x:%2x%c",
+        &parsed[0],
+        &parsed[1],
+        &parsed[2],
+        &parsed[3],
+        &parsed[4],
+        &parsed[5],
+        &trailing_character
+    );
+
+    if (parsed_fields != 6 || strlen(VSENSE_WIFI_BSSID) != 17) {
+        return false;
+    }
+
+    for (size_t i = 0; i < 6; i++) {
+        if (parsed[i] > UINT8_MAX) {
+            return false;
+        }
+        bssid[i] = (uint8_t)parsed[i];
+    }
+
+    return true;
+}
+#endif
 
 static void vsense_wifi_event_handler(
     void *arg,
@@ -99,9 +135,25 @@ void vsense_wifi_connect_sta(void)
 
     ESP_LOGI(TAG, "Connecting to SSID: %s", VSENSE_WIFI_SSID);
 
+#if VSENSE_WIFI_BSSID_LOCK_ENABLED
+    if (!vsense_wifi_parse_bssid(wifi_config.sta.bssid)) {
+        ESP_LOGE(TAG, "Invalid Wi-Fi BSSID configuration: %s", VSENSE_WIFI_BSSID);
+        return;
+    }
+
+    wifi_config.sta.bssid_set = true;
+    ESP_LOGI(
+        TAG,
+        "Access point lock enabled: BSSID=%s channel=%d",
+        VSENSE_WIFI_BSSID,
+        VSENSE_WIFI_CHANNEL
+    );
+#endif
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     xEventGroupWaitBits(
         s_wifi_event_group,

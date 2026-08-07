@@ -1,0 +1,150 @@
+menu "VSense node configuration"
+
+    config VSENSE_NODE_ID
+        string "Node identifier"
+        default "node_01"
+        help
+            Unique identifier used in logs, MQTT client identity, topics,
+            and CSI payloads. Use values such as tx_01, rx_01, or rx_02.
+
+    choice VSENSE_NODE_ROLE
+        prompt "Node role"
+        default VSENSE_NODE_ROLE_RX
+
+        config VSENSE_NODE_ROLE_TX
+            bool "TX"
+
+        config VSENSE_NODE_ROLE_RX
+            bool "RX"
+    endchoice
+
+    menu "Wi-Fi"
+        config VSENSE_WIFI_SSID
+            string "Wi-Fi SSID"
+            default "change me"
+
+        config VSENSE_WIFI_PASSWORD
+            string "Wi-Fi password"
+            default "change me"
+
+        config VSENSE_WIFI_CHANNEL
+            int "Wi-Fi channel"
+            range 1 14
+            default 6
+
+        config VSENSE_WIFI_BSSID_LOCK_ENABLED
+            bool "Lock connection to a specific access point BSSID"
+            default n
+            help
+                Require this node to associate with one specific access point.
+                This prevents nodes using the same SSID from roaming onto
+                different radios or channels during CSI measurements.
+
+        config VSENSE_WIFI_BSSID
+            string "Access point BSSID"
+            default "00:00:00:00:00:00"
+            depends on VSENSE_WIFI_BSSID_LOCK_ENABLED
+            help
+                Access point MAC address in six-byte colon-separated
+                hexadecimal form.
+    endmenu
+
+    menu "Packet generation"
+        config VSENSE_PACKET_RATE_HZ
+            int "TX packet rate (Hz)"
+            range 1 1000
+            default 100
+
+        config VSENSE_RX_01_IP
+            string "RX-01 target IPv4 address"
+            default "192.168.128.35"
+
+        config VSENSE_RX_02_ENABLED
+            bool "Enable RX-02 target"
+            default n
+            help
+                Send each TX packet to a second RX node. Keep this disabled
+                until RX-02 has a verified or DHCP-reserved IPv4 address.
+
+        config VSENSE_RX_02_IP
+            string "RX-02 target IPv4 address"
+            default "192.168.128.169"
+            depends on VSENSE_RX_02_ENABLED
+
+        config VSENSE_TX_TARGET_PORT
+            int "RX target UDP port"
+            range 1 65535
+            default 3333
+    endmenu
+
+    menu "RX forwarding"
+        config VSENSE_TX_MAC_FILTER_ENABLED
+            bool "Filter CSI frames by TX MAC address"
+            default n
+            help
+                Accept CSI frames only from the configured VSense TX node.
+                Keep this disabled by default so a replaced or incorrectly
+                configured TX cannot stop CSI collection without an explicit
+                warning. Enable it for controlled sensing runs after verifying
+                the TX station MAC.
+
+        config VSENSE_TX_MAC
+            string "Expected TX MAC address"
+            default "84:fc:e6:5e:50:24"
+            help
+                Expected TX station MAC in six-byte colon-separated
+                hexadecimal form. The value is retained even while filtering
+                is disabled so it can be enabled without rebuilding the
+                profile from scratch.
+
+        config VSENSE_RX_UDP_PORT
+            int "RX UDP listen port"
+            range 1 65535
+            default 3333
+
+        config VSENSE_COLLECTOR_IP
+            string "Collector IPv4 address"
+            default "192.168.128.167"
+
+        config VSENSE_COLLECTOR_UDP_PORT
+            int "Collector UDP port"
+            range 1 65535
+            default 4444
+
+        config VSENSE_MQTT_BROKER_URI
+            string "MQTT broker URI"
+            default "mqtt://192.168.128.167"
+
+        config VSENSE_MQTT_KEEPALIVE_SECONDS
+            int "MQTT keepalive interval (seconds)"
+            range 15 60
+            default 30
+            help
+                MQTT transport keepalive. Node liveness on the collector is
+                detected independently from CSI/health traffic, so this value
+                does not need to be shortened for five-second UI timeouts.
+
+        config VSENSE_HEALTH_INTERVAL_MS
+            int "Health telemetry interval (ms)"
+            range 1000 60000
+            default 5000
+
+        config VSENSE_CSI_BUFFER_MAX_LEN
+            int "Maximum CSI buffer length"
+            range 64 384
+            default 384
+            help
+                Maximum raw CSI bytes stored per frame. The upper bound keeps
+                the JSON payload within the configured MQTT and UDP buffers.
+
+        config VSENSE_RAW_SEND_EVERY_N_FRAMES
+            int "Forward every Nth accepted CSI frame"
+            range 1 100
+            default 1
+            help
+                Use 1 to forward every accepted CSI frame. Values greater than
+                1 intentionally reduce the output sample rate and must be
+                selected from measured queue/drop and synchronization results.
+    endmenu
+
+endmenu

@@ -6,7 +6,7 @@ This document describes the expected CSI dataset format used by the Week 1 analy
 
 The dataset itself is not committed to Git because Parquet files may be large. Local CSI recordings should be placed under the data/ directory.
 
-## Canonical Week 1 Server Format
+## Canonical schema v2 (Week 4)
 
 The preferred logical format for replay/live testing is:
 
@@ -17,6 +17,19 @@ The preferred logical format for replay/live testing is:
 | rssi | Received signal strength |
 | csi | Raw CSI values in [imag0, real0, imag1, real1, ...] format |
 | label | Optional label for recorded data only |
+| schema_version | `2` for normalized MQTT records |
+| message_type | `csi`, `health`, or `node_status` |
+| recorded_at | Collector receive time in UTC ISO-8601 form |
+| collector_ts_us | Collector receive time as Unix epoch microseconds |
+
+`node_id` is mandatory in stored multi-node data. The collector derives it
+from `vsense/{node_id}/...`; topic identity overrides a conflicting payload
+value. Health rows carry firmware telemetry. Node-state rows carry `status`
+(`online`/`offline`) and `source` (`mqtt_status`, `csi`, `health`, or `timeout`).
+The firmware `ts_us` value is device uptime and is not shared across RX nodes.
+Use `collector_ts_us` to align CSI from multiple RX nodes or LD2450 radar data
+on the collector's common clock; keep `ts_us` for device-side interval and
+jitter analysis.
 
 Example logical row:
 
