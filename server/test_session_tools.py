@@ -72,6 +72,7 @@ class SessionToolsTest(unittest.TestCase):
                 ["node_01", "node_02"],
                 max_delta_us=200_000,
                 min_duration_seconds=0,
+                min_ground_truth_rate_hz=1.0,
             )
             self.assertEqual(result["status"], "PASS")
             self.assertEqual(result["synchronization"]["node_01"]["max_delta_ms"], 10.0)
@@ -103,6 +104,61 @@ class SessionToolsTest(unittest.TestCase):
             )
             self.assertEqual(result["status"], "FAIL")
             self.assertTrue(any("node_02" in error for error in result["errors"]))
+
+    def test_validator_rejects_long_ground_truth_outage(self):
+        with TemporaryDirectory() as temporary_directory:
+            session_dir = Path(temporary_directory)
+            (session_dir / "metadata.json").write_text(
+                json.dumps({
+                    "session_id": "outage",
+                    "status": "completed",
+                    "started_collector_ts_us": 1_000_000,
+                    "ended_collector_ts_us": 12_000_000,
+                }),
+                encoding="utf-8",
+            )
+            write_jsonl(session_dir / "csi.jsonl", [
+                {
+                    "message_type": "csi",
+                    "node_id": "rx_01",
+                    "collector_ts_us": timestamp,
+                }
+                for timestamp in range(1_000_000, 12_000_001, 100_000)
+            ])
+            write_jsonl(session_dir / "ground_truth.jsonl", [
+                {
+                    "message_type": "ground_truth",
+                    "node_id": "ld2450_01",
+                    "frame_seq": frame_seq,
+                    "collector_ts_us": timestamp,
+                }
+                for frame_seq, timestamp in (
+                    (1, 1_000_000),
+                    (2, 1_100_000),
+                    (100, 11_900_000),
+                    (101, 12_000_000),
+                )
+            ])
+
+            result = validate_session(
+                session_dir,
+                ["rx_01"],
+                max_delta_us=200_000,
+                min_duration_seconds=0,
+                max_radar_gap_us=1_000_000,
+                min_ground_truth_rate_hz=0,
+            )
+
+            self.assertEqual(result["status"], "FAIL")
+            self.assertGreater(result["max_radar_gap_ms"], 10_000)
+            self.assertTrue(any(
+                "maximum ground-truth gap" in error
+                for error in result["errors"]
+            ))
+            self.assertTrue(any(
+                "radar coverage gap" in error
+                for error in result["errors"]
+            ))
 
 
 if __name__ == "__main__":
