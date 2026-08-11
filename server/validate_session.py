@@ -66,6 +66,7 @@ def validate_session(
     min_duration_seconds,
     max_radar_gap_us=1_000_000,
     max_csi_gap_us=1_000_000,
+    max_hard_gap_us=10_000_000,
     min_ground_truth_rate_hz=5.0,
     max_radar_frame_loss_ratio=0.05,
 ):
@@ -181,26 +182,28 @@ def validate_session(
             session_start_us,
             session_end_us,
         )
-        if (
-            node_timestamps
-            and maximum_csi_gap_by_node[node_id] > max_csi_gap_us
-        ):
+        if node_timestamps and maximum_csi_gap_by_node[node_id] > max_hard_gap_us:
             errors.append(
+                f"{node_id} maximum CSI stream gap "
+                f"{maximum_csi_gap_by_node[node_id] / 1000:.1f} ms exceeds "
+                f"hard limit {max_hard_gap_us / 1000:.1f} ms"
+            )
+        elif node_timestamps and maximum_csi_gap_by_node[node_id] > max_csi_gap_us:
+            warnings.append(
                 f"{node_id} maximum CSI stream gap "
                 f"{maximum_csi_gap_by_node[node_id] / 1000:.1f} ms exceeds "
                 f"allowed {max_csi_gap_us / 1000:.1f} ms"
             )
-        if deltas_by_node[node_id] and max(deltas_by_node[node_id]) > max_delta_us:
+        radar_to_csi_p95 = percentile(deltas_by_node[node_id], 95)
+        if radar_to_csi_p95 is not None and radar_to_csi_p95 > max_delta_us:
             errors.append(
-                f"{node_id} maximum CSI-radar delta exceeds "
+                f"{node_id} p95 CSI-radar delta exceeds "
                 f"{max_delta_us / 1000:.1f} ms"
             )
-        if (
-            reverse_deltas_by_node[node_id]
-            and max(reverse_deltas_by_node[node_id]) > max_delta_us
-        ):
+        csi_to_radar_p95 = percentile(reverse_deltas_by_node[node_id], 95)
+        if csi_to_radar_p95 is not None and csi_to_radar_p95 > max_delta_us:
             errors.append(
-                f"{node_id} maximum radar coverage gap exceeds "
+                f"{node_id} p95 radar coverage delta exceeds "
                 f"{max_delta_us / 1000:.1f} ms"
             )
 
@@ -209,8 +212,13 @@ def validate_session(
         session_start_us,
         session_end_us,
     )
-    if radar_timestamps and maximum_radar_gap_us > max_radar_gap_us:
+    if radar_timestamps and maximum_radar_gap_us > max_hard_gap_us:
         errors.append(
+            f"maximum ground-truth gap {maximum_radar_gap_us / 1000:.1f} ms "
+            f"exceeds hard limit {max_hard_gap_us / 1000:.1f} ms"
+        )
+    elif radar_timestamps and maximum_radar_gap_us > max_radar_gap_us:
+        warnings.append(
             f"maximum ground-truth gap {maximum_radar_gap_us / 1000:.1f} ms "
             f"exceeds allowed {max_radar_gap_us / 1000:.1f} ms"
         )
@@ -234,9 +242,10 @@ def validate_session(
     if metadata.get("status") != "completed":
         errors.append("metadata status is not completed")
 
+    status = "FAIL" if errors else ("WARNING" if warnings else "PASS")
     return {
         "session_id": metadata.get("session_id", session_dir.name),
-        "status": "PASS" if not errors else "FAIL",
+        "status": status,
         "csi_rows": len(csi),
         "ground_truth_rows": len(radar),
         "csi_rows_by_node": dict(csi_by_node),
@@ -263,6 +272,11 @@ def validate_session(
                     if reverse_deltas_by_node[node_id]
                     else None
                 ),
+                "p95_csi_to_radar_delta_ms": (
+                    round(percentile(reverse_deltas_by_node[node_id], 95) / 1000, 3)
+                    if reverse_deltas_by_node[node_id]
+                    else None
+                ),
                 "max_csi_stream_gap_ms": round(
                     maximum_csi_gap_by_node[node_id] / 1000,
                     3,
@@ -283,6 +297,12 @@ def parse_args():
     parser.add_argument("--min-duration-seconds", type=float, default=600.0)
     parser.add_argument("--max-radar-gap-ms", type=float, default=1000.0)
     parser.add_argument("--max-csi-gap-ms", type=float, default=1000.0)
+    parser.add_argument(
+        "--max-hard-gap-ms",
+        type=float,
+        default=10000.0,
+        help="A stream gap above this limit fails the session; smaller gaps warn",
+    )
     parser.add_argument("--min-ground-truth-rate-hz", type=float, default=5.0)
     parser.add_argument(
         "--max-radar-frame-loss-percent",
@@ -301,11 +321,12 @@ def main():
         args.min_duration_seconds,
         int(args.max_radar_gap_ms * 1000),
         int(args.max_csi_gap_ms * 1000),
+        int(args.max_hard_gap_ms * 1000),
         args.min_ground_truth_rate_hz,
         args.max_radar_frame_loss_percent / 100,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    if result["status"] != "PASS":
+    if result["status"] == "FAIL":
         sys.exit(1)
 
 

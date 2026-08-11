@@ -156,9 +156,49 @@ class SessionToolsTest(unittest.TestCase):
                 for error in result["errors"]
             ))
             self.assertTrue(any(
-                "radar coverage gap" in error
+                "p95 radar coverage delta" in error
                 for error in result["errors"]
             ))
+
+    def test_validator_warns_for_isolated_short_stream_gaps(self):
+        with TemporaryDirectory() as temporary_directory:
+            session_dir = Path(temporary_directory)
+            (session_dir / "metadata.json").write_text(
+                json.dumps({"session_id": "warning", "status": "completed"}),
+                encoding="utf-8",
+            )
+            timestamps = list(range(0, 2_000_001, 100_000)) + list(
+                range(5_000_000, 7_000_001, 100_000)
+            )
+            write_jsonl(session_dir / "csi.jsonl", [
+                {
+                    "message_type": "csi",
+                    "node_id": "rx_01",
+                    "collector_ts_us": timestamp,
+                }
+                for timestamp in timestamps
+            ])
+            write_jsonl(session_dir / "ground_truth.jsonl", [
+                {
+                    "message_type": "ground_truth",
+                    "node_id": "ld2450_01",
+                    "frame_seq": frame_seq,
+                    "collector_ts_us": timestamp,
+                }
+                for frame_seq, timestamp in enumerate(timestamps, start=1)
+            ])
+
+            result = validate_session(
+                session_dir,
+                ["rx_01"],
+                max_delta_us=200_000,
+                min_duration_seconds=0,
+                min_ground_truth_rate_hz=0,
+            )
+
+            self.assertEqual(result["status"], "WARNING")
+            self.assertFalse(result["errors"])
+            self.assertTrue(any("stream gap" in item for item in result["warnings"]))
 
 
 if __name__ == "__main__":
