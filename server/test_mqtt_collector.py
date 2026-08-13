@@ -132,6 +132,80 @@ class CollectorTest(unittest.TestCase):
             telemetry = (session_dir / "telemetry.jsonl").read_text().splitlines()
             self.assertEqual(len(telemetry), 2)
 
+    def test_ground_truth_topic_is_normalized(self):
+        with redirect_stdout(self.output):
+            self.send("gt", "ld2450_01", {
+                "node_id": "wrong",
+                "ts_us": 123456789,
+                "frame_seq": 42,
+                "targets": [{
+                    "target_id": 1,
+                    "x_mm": -782,
+                    "y_mm": 1713,
+                    "speed_cm_s": -16,
+                    "distance_mm": 1883,
+                    "resolution_mm": 320,
+                }],
+            })
+        records = self.records()
+        ground_truth = [
+            record for record in records
+            if record["message_type"] == "ground_truth"
+        ][0]
+        self.assertEqual(ground_truth["node_id"], "ld2450_01")
+        self.assertEqual(ground_truth["schema_version"], 1)
+        self.assertIsInstance(ground_truth["collector_ts_us"], int)
+        self.assertEqual(ground_truth["mqtt_topic"], "vsense/gt/ld2450_01")
+
+    def test_empty_target_list_is_valid(self):
+        with redirect_stdout(self.output):
+            self.send("gt", "ld2450_01", {
+                "ts_us": 1,
+                "frame_seq": 1,
+                "targets": [],
+            })
+        self.assertEqual(
+            [r["targets"] for r in self.records() if r["message_type"] == "ground_truth"],
+            [[]],
+        )
+
+    def test_invalid_ground_truth_is_not_emitted(self):
+        with redirect_stdout(self.output):
+            self.send("gt", "ld2450_01", {
+                "ts_us": 1,
+                "frame_seq": 1,
+                "targets": "not-a-list",
+            })
+        self.assertEqual(self.records(), [])
+
+    def test_session_files_are_split_by_message_type(self):
+        self.collector.close()
+        with TemporaryDirectory() as temporary_directory:
+            session_dir = Path(temporary_directory)
+            self.collector = Collector(
+                [],
+                session_dir=session_dir,
+                session_id="test_session",
+            )
+            with redirect_stdout(self.output):
+                self.send("node_01", "csi", {"ts_us": 1, "csi": [1, 2]})
+                self.send("gt", "ld2450_01", {
+                    "ts_us": 2,
+                    "frame_seq": 1,
+                    "targets": [],
+                })
+            self.collector.close()
+            self.assertEqual(
+                len((session_dir / "csi.jsonl").read_text().splitlines()),
+                1,
+            )
+            self.assertEqual(
+                len((session_dir / "ground_truth.jsonl").read_text().splitlines()),
+                1,
+            )
+            telemetry = (session_dir / "telemetry.jsonl").read_text().splitlines()
+            self.assertEqual(len(telemetry), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
