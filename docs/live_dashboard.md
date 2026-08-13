@@ -74,6 +74,22 @@ python server/run_dashboard.py --inactivity-seconds 10
 Production or evaluation runs must use the agreed real threshold rather than
 the shortened demo value.
 
+With the 10-second demo threshold, replay the recorded inactive session:
+
+```bash
+python server/csi_replay.py \
+  /path/to/20260811_132130_lab_sitting_r02/csi.jsonl \
+  --transport mqtt \
+  --mqtt-host 127.0.0.1 \
+  --limit 5000 \
+  --delay 0.002
+```
+
+The current baseline predicts this recording as `standing`, not `sitting`.
+Both are intentionally inactive classes, so the dashboard raises the alarm
+after 10 seconds of recording time. This verifies the alarm path but also
+demonstrates why the baseline's activity-class accuracy must not be overstated.
+
 ## Hardware-free LD2450 comparison
 
 While the launcher is running, publish simulated radar reference frames from a
