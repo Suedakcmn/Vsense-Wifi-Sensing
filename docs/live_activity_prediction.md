@@ -59,8 +59,11 @@ computer. Stop the pipeline with `Ctrl+C`; both processes terminate cleanly.
 
 The predictor accepts normalized CSI rows for the nodes named in
 `feature_config.json`. For `baseline_v1`, both `rx_01` and `rx_02` are required.
-Health, status, ground-truth, unknown-node, malformed, duplicate, out-of-order,
-and wrong-length CSI records do not produce predictions.
+Health, node-status, and future zone-prediction records pass through for the
+dashboard. Raw CSI and ground-truth records do not pass through, so the web
+state is not flooded with high-rate samples. Unknown-node, malformed,
+duplicate, out-of-order, and wrong-length CSI records do not produce
+predictions.
 
 ## Hardware-free replay check
 

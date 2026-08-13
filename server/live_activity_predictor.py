@@ -14,6 +14,9 @@ from activity_model import ActivityModel
 from ml.windows import CSIWindow
 
 
+PASSTHROUGH_MESSAGE_TYPES = frozenset({"health", "node_status", "zone_prediction"})
+
+
 @dataclass(frozen=True)
 class LiveWindowConfig:
     duration_us: int
@@ -201,6 +204,12 @@ def run_stream(
                 file=error_stream,
             )
             continue
+        if row.get("message_type") in PASSTHROUGH_MESSAGE_TYPES:
+            print(
+                json.dumps(row, ensure_ascii=False, separators=(",", ":")),
+                file=output_stream,
+                flush=True,
+            )
         for record in predictor.process(row):
             print(
                 json.dumps(record, ensure_ascii=False, separators=(",", ":")),
