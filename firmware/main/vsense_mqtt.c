@@ -171,6 +171,36 @@ bool vsense_mqtt_is_connected(void)
     return s_mqtt_connected;
 }
 
+bool vsense_mqtt_publish_message(
+    const char *topic,
+    const char *payload,
+    size_t payload_length,
+    int qos,
+    bool retain
+)
+{
+    if (
+        topic == NULL ||
+        payload == NULL ||
+        payload_length == 0 ||
+        s_mqtt_client == NULL ||
+        !s_mqtt_connected
+    ) {
+        return false;
+    }
+
+    int message_id = esp_mqtt_client_publish(
+        s_mqtt_client,
+        topic,
+        payload,
+        (int)payload_length,
+        qos,
+        retain ? 1 : 0
+    );
+
+    return message_id >= 0;
+}
+
 bool vsense_mqtt_publish_health(
     uint64_t uptime_ms,
     uint32_t free_heap,
@@ -178,6 +208,7 @@ bool vsense_mqtt_publish_health(
     uint32_t udp_packets,
     uint32_t csi_callbacks,
     uint32_t csi_filtered,
+    uint32_t csi_length_filtered,
     uint32_t csi_received,
     uint32_t csi_queued,
     uint32_t csi_sent,
@@ -190,6 +221,7 @@ bool vsense_mqtt_publish_health(
     uint32_t csi_dropped,
     uint32_t csi_oversized,
     uint32_t queue_depth,
+    uint32_t expected_csi_length,
     uint32_t raw_send_every_n_frames,
     int8_t last_rssi
 )
@@ -235,6 +267,7 @@ bool vsense_mqtt_publish_health(
         "\"udp_packets\":%lu,"
         "\"csi_callbacks\":%lu,"
         "\"csi_filtered\":%lu,"
+        "\"csi_length_filtered\":%lu,"
         "\"csi_received\":%lu,"
         "\"csi_queued\":%lu,"
         "\"csi_sent\":%lu,"
@@ -247,6 +280,7 @@ bool vsense_mqtt_publish_health(
         "\"csi_dropped\":%lu,"
         "\"csi_oversized\":%lu,"
         "\"queue_depth\":%lu,"
+        "\"expected_csi_length\":%lu,"
         "\"raw_send_every_n_frames\":%lu,"
         "\"last_rssi\":%d"
         "}",
@@ -257,6 +291,7 @@ bool vsense_mqtt_publish_health(
         (unsigned long)udp_packets,
         (unsigned long)csi_callbacks,
         (unsigned long)csi_filtered,
+        (unsigned long)csi_length_filtered,
         (unsigned long)csi_received,
         (unsigned long)csi_queued,
         (unsigned long)csi_sent,
@@ -269,6 +304,7 @@ bool vsense_mqtt_publish_health(
         (unsigned long)csi_dropped,
         (unsigned long)csi_oversized,
         (unsigned long)queue_depth,
+        (unsigned long)expected_csi_length,
         (unsigned long)raw_send_every_n_frames,
         (int)last_rssi
     );
@@ -309,7 +345,7 @@ bool vsense_mqtt_publish_health(
 }
 
 bool vsense_mqtt_publish_csi(
-    const char *payload,
+    const void *payload,
     size_t payload_length
 )
 {
@@ -344,7 +380,7 @@ bool vsense_mqtt_publish_csi(
     int message_id = esp_mqtt_client_publish(
         s_mqtt_client,
         topic,
-        payload,
+        (const char *)payload,
         (int)payload_length,
         0,
         0

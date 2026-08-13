@@ -39,7 +39,13 @@ before flashing.
 ## Current hardening defaults
 
 - Wi-Fi power save: disabled.
-- TX MAC filter: disabled until explicitly verified and enabled.
+- Global TX MAC filter default: disabled for first-boot diagnostics.
+- RX-01/RX-02 deployment profiles: enabled for the verified TX-01 MAC
+  `84:fc:e6:5e:50:24`.
+- Global CSI length filter default: disabled until the active PHY is measured.
+- RX-01 deployment profile: enabled at 256 raw CSI bytes after its canary.
+- RX-02 deployment profile: disabled until an RX-02 canary verifies its CSI
+  length distribution and transport health.
 - Maximum CSI length: 384 bytes.
 - Forwarding interval: every accepted frame (`N=1`).
 - CSI queue length: 128.

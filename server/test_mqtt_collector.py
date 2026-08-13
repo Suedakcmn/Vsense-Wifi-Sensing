@@ -7,12 +7,19 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from mqtt_collector import Collector
+from vsense_binary import encode_csi_packet
 
 
 class Message:
     def __init__(self, topic, payload):
         self.topic = topic
         self.payload = json.dumps(payload).encode()
+
+
+class RawMessage:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.payload = payload
 
 
 class CollectorTest(unittest.TestCase):

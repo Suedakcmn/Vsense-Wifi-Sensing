@@ -3,6 +3,11 @@ idf_component_register(
         "app_main.c"
         "role_tx.c"
         "role_rx.c"
+        "role_ld2450.c"
+        "ld2450_parser.c"
+        "ld2450_stream.c"
+        "ld2450_json.c"
+        "vsense_binary.c"
         "vsense_wifi.c"
         "vsense_mqtt.c"
     INCLUDE_DIRS
@@ -14,5 +19,6 @@ idf_component_register(
         nvs_flash
         lwip
         esp_timer
+        esp_driver_uart
         mqtt
 )
