@@ -61,6 +61,34 @@ class DashboardStateTest(unittest.TestCase):
         }))
         self.assertEqual(state.snapshot()["latest_zone"]["zone"], "kitchen")
 
+    def test_keeps_bounded_motion_score_history(self):
+        state = DashboardState(DashboardStateConfig(max_events=2))
+        for timestamp in (1, 2, 3):
+            self.assertTrue(state.apply({
+                "message_type": "motion_score",
+                "window_end_us": timestamp,
+                "scores": {"rx_01": timestamp * 0.1, "rx_02": timestamp * 0.2},
+            }))
+        snapshot = state.snapshot()
+        self.assertEqual(
+            [point["window_end_us"] for point in snapshot["motion_scores"]],
+            [2, 3],
+        )
+        self.assertEqual(snapshot["events"], [])
+
+    def test_rejects_invalid_motion_score(self):
+        state = DashboardState()
+        self.assertFalse(state.apply({
+            "message_type": "motion_score",
+            "window_end_us": 1,
+            "scores": {},
+        }))
+        self.assertFalse(state.apply({
+            "message_type": "motion_score",
+            "window_end_us": 1,
+            "scores": {"rx_01": "high"},
+        }))
+
     def test_ignores_invalid_and_unknown_records(self):
         state = DashboardState()
         self.assertFalse(state.apply([]))

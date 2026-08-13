@@ -3,6 +3,7 @@ export const EMPTY_STATE = Object.freeze({
   latest_prediction: null,
   active_alarm: null,
   latest_zone: null,
+  motion_scores: [],
   nodes: {},
   events: [],
 });
@@ -16,9 +17,30 @@ export function normalizeSnapshot(value) {
     latest_prediction: value.latest_prediction ?? null,
     active_alarm: value.active_alarm ?? null,
     latest_zone: value.latest_zone ?? null,
+    motion_scores: Array.isArray(value.motion_scores) ? value.motion_scores : [],
     nodes: value.nodes && typeof value.nodes === "object" ? value.nodes : {},
     events: Array.isArray(value.events) ? value.events : [],
   };
+}
+
+export function motionSeries(points) {
+  if (!Array.isArray(points) || !points.length) return [];
+  const nodeIds = [...new Set(points.flatMap((point) => Object.keys(point?.scores ?? {})))].sort();
+  const values = points.flatMap((point) => Object.values(point?.scores ?? {}))
+    .map(Number)
+    .filter(Number.isFinite);
+  const maximum = Math.max(...values, 0);
+  const scale = maximum > 0 ? maximum : 1;
+  const denominator = Math.max(points.length - 1, 1);
+  return nodeIds.map((nodeId) => ({
+    nodeId,
+    latest: Number(points.at(-1)?.scores?.[nodeId]),
+    path: points.map((point, index) => {
+      const value = Number(point?.scores?.[nodeId]);
+      if (!Number.isFinite(value)) return null;
+      return `${(index / denominator) * 100},${32 - (Math.max(0, value) / scale) * 30}`;
+    }).filter(Boolean).join(" "),
+  }));
 }
 
 export function websocketUrl(locationValue = window.location) {

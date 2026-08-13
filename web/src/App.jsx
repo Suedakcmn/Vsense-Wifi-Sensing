@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   EMPTY_STATE,
   eventLabel,
+  motionSeries,
   normalizeSnapshot,
   percentage,
   websocketUrl,
@@ -77,6 +78,38 @@ function NodeCard({ node }) {
   );
 }
 
+function MotionChart({ points }) {
+  const series = motionSeries(points);
+  return (
+    <section className="panel section-block motion-panel">
+      <div className="section-heading">
+        <div><p className="eyebrow">CSI movement</p><h2>Live motion score</h2></div>
+        <span>{points.length} recent windows</span>
+      </div>
+      {series.length ? (
+        <>
+          <div className="motion-chart" role="img" aria-label="Receiver motion score history">
+            <svg viewBox="0 0 100 34" preserveAspectRatio="none">
+              <line x1="0" y1="32" x2="100" y2="32" className="chart-axis" />
+              {series.map((line, index) => (
+                <polyline key={line.nodeId} points={line.path} className={`motion-line motion-line-${index % 3}`} vectorEffect="non-scaling-stroke" />
+              ))}
+            </svg>
+          </div>
+          <div className="motion-legend">
+            {series.map((line, index) => (
+              <span key={line.nodeId} className={`motion-key motion-key-${index % 3}`}>
+                {line.nodeId}: {Number.isFinite(line.latest) ? line.latest.toFixed(2) : "—"}
+              </span>
+            ))}
+          </div>
+          <p className="muted motion-note">Relative CSI variance; use the trend, not the raw value, to compare movement over time.</p>
+        </>
+      ) : <p className="empty-message">Waiting for clean CSI windows...</p>}
+    </section>
+  );
+}
+
 export default function App() {
   const { state, connection } = useDashboardSocket();
   const prediction = state.latest_prediction;
@@ -140,6 +173,8 @@ export default function App() {
           </p>
         </article>
       </section>
+
+      <MotionChart points={state.motion_scores} />
 
       <section className="panel section-block">
         <div className="section-heading">

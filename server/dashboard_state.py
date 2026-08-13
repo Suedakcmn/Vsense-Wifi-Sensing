@@ -25,6 +25,7 @@ class DashboardState:
         self.latest_prediction: dict | None = None
         self.active_alarm: dict | None = None
         self.latest_zone: dict | None = None
+        self.motion_scores: deque[dict] = deque(maxlen=config.max_events)
         self.nodes: dict[str, dict] = {}
         self.events: deque[dict] = deque(maxlen=config.max_events)
         self.revision = 0
@@ -45,6 +46,8 @@ class DashboardState:
             changed = self._apply_health(record)
         elif message_type == "zone_prediction":
             changed = self._apply_zone(record)
+        elif message_type == "motion_score":
+            changed = self._apply_motion_score(record)
 
         if changed:
             self.revision += 1
@@ -105,6 +108,22 @@ class DashboardState:
         self.events.append(deepcopy(record))
         return True
 
+    def _apply_motion_score(self, record: dict) -> bool:
+        timestamp = record.get("window_end_us")
+        scores = record.get("scores")
+        if not isinstance(timestamp, int) or not isinstance(scores, dict) or not scores:
+            return False
+        if not all(
+            isinstance(node_id, str)
+            and node_id
+            and isinstance(score, (int, float))
+            and not isinstance(score, bool)
+            for node_id, score in scores.items()
+        ):
+            return False
+        self.motion_scores.append(deepcopy(record))
+        return True
+
     def snapshot(self) -> dict:
         return {
             "schema_version": 1,
@@ -113,6 +132,7 @@ class DashboardState:
             "latest_prediction": deepcopy(self.latest_prediction),
             "active_alarm": deepcopy(self.active_alarm),
             "latest_zone": deepcopy(self.latest_zone),
+            "motion_scores": [deepcopy(value) for value in self.motion_scores],
             "nodes": {
                 node_id: deepcopy(value)
                 for node_id, value in sorted(self.nodes.items())

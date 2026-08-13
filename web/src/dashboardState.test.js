@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   eventLabel,
+  motionSeries,
   normalizeSnapshot,
   percentage,
   websocketUrl,
@@ -52,4 +53,15 @@ test("formats known event types", () => {
     eventLabel({ message_type: "node_status", node_id: "rx_01", status: "online" }),
     "rx_01: online",
   );
+});
+
+test("builds finite chart paths for receiver motion scores", () => {
+  const series = motionSeries([
+    { window_end_us: 1, scores: { rx_01: 0, rx_02: 2 } },
+    { window_end_us: 2, scores: { rx_01: 1, rx_02: 4 } },
+  ]);
+  assert.deepEqual(series.map((value) => value.nodeId), ["rx_01", "rx_02"]);
+  assert.equal(series[0].latest, 1);
+  assert.match(series[0].path, /^0,32 100,/);
+  assert.equal(motionSeries([]).length, 0);
 });

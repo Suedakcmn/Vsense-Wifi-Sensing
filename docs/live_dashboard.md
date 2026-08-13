@@ -58,7 +58,10 @@ python server/csi_replay.py /path/to/session/csi.jsonl \
 ```
 
 The 2 ms delay avoids overwhelming the QoS 0 replay path. The dashboard should
-show both receiver nodes and update the current activity. The baseline model is
+show both receiver nodes, update the current activity, and draw a separate
+relative motion-score line for each receiver. The chart uses the existing CSI
+variance baseline and is intended for movement trends rather than comparison of
+absolute scores between receivers. The baseline model is
 only an integration artifact; its documented held-out macro-F1 remains 0.271.
 Do not interpret one successful replay window as a model-accuracy result.
 
