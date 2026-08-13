@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "selection_metric": "validation macro_f1",
+  "selected_model": "knn",
+  "split_policy": "repeat 1=train, repeat 2=validation, repeat 3=test",
+  "honesty_note": "Splits are session-independent but not fully person-independent; the campaign does not contain every class for every subject.",
+  "splits": {
+    "train": {
+      "windows": 3099,
+      "sessions": [
+        "20260810_142641_lab_empty_room_r01",
+        "20260810_154517_lab_walking_r01",
+        "20260811_103534_lab_desk_work_r01",
+        "20260811_111731_lab_sitting_r01",
+        "20260811_135408_lab_standing_r01"
+      ],
+      "subjects": [
+        "busra",
+        "none",
+        "sueda"
+      ],
+      "class_counts": {
+        "desk_work": 692,
+        "empty_room": 624,
+        "walking": 601,
+        "standing": 596,
+        "sitting": 586
+      }
+    },
+    "validation": {
+      "windows": 5107,
+      "sessions": [
+        "20260810_145706_lab_empty_room_r02",
+        "20260810_160021_lab_walking_r02",
+        "20260811_104956_lab_desk_work_r02",
+        "20260811_132130_lab_sitting_r02",
+        "20260811_142725_lab_standing_r02"
+      ],
+      "subjects": [
+        "busra",
+        "none",
+        "sueda"
+      ],
+      "class_counts": {
+        "empty_room": 2553,
+        "desk_work": 703,
+        "standing": 630,
+        "walking": 626,
+        "sitting": 595
+      }
+    },
+    "test": {
+      "windows": 3074,
+      "sessions": [
+        "20260810_161516_lab_walking_r03",
+        "20260811_110352_lab_desk_work_r03",
+        "20260811_133652_lab_sitting_r03",
+        "20260811_145406_lab_standing_r03",
+        "20260811_150821_lab_empty_room_r03"
+      ],
+      "subjects": [
+        "busra",
+        "none",
+        "sueda"
+      ],
+      "class_counts": {
+        "desk_work": 638,
+        "standing": 626,
+        "empty_room": 609,
+        "walking": 607,
+        "sitting": 594
+      }
+    }
+  },
+  "models": {
+    "knn": {
+      "validation": {
+        "accuracy": 0.7793224985314274,
+        "macro_f1": 0.6179363868846396,
+        "classification_report": {
+          "empty_room": {
+            "precision": 0.9838150289017341,
+            "recall": 1.0,
+            "f1-score": 0.9918414918414918,
+            "support": 2553.0
+          },
+          "walking": {
+            "precision": 0.7964376590330788,
+            "recall": 1.0,
+            "f1-score": 0.886685552407932,
+            "support": 626.0
+          },
+          "sitting": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 595.0
+          },
+          "standing": {
+            "precision": 0.41837732160312807,
+            "recall": 0.6793650793650794,
+            "f1-score": 0.5178463399879008,
+            "support": 630.0
+          },
+          "desk_work": {
+            "precision": 1.0,
+            "recall": 0.5305832147937412,
+            "f1-score": 0.6933085501858736,
+            "support": 703.0
+          },
+          "accuracy": 0.7793224985314274,
+          "macro avg": {
+            "precision": 0.6397260019075882,
+            "recall": 0.6419896588317642,
+            "f1-score": 0.6179363868846396,
+            "support": 5107.0
+          },
+          "weighted avg": {
+            "precision": 0.7787012837185833,
+            "recall": 0.7793224985314274,
+            "f1-score": 0.7638291735758255,
+            "support": 5107.0
+          }
+        }
+      },
+      "test": {
+        "accuracy": 0.3542615484710475,
+        "macro_f1": 0.2712853642886309,
+        "classification_report": {
+          "empty_room": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 609.0
+          },
+          "walking": {
+            "precision": 0.3295331161780673,
+            "recall": 1.0,
+            "f1-score": 0.4957125357288689,
+            "support": 607.0
+          },
+          "sitting": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 594.0
+          },
+          "standing": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 626.0
+          },
+          "desk_work": {
+            "precision": 1.0,
+            "recall": 0.7554858934169278,
+            "f1-score": 0.8607142857142858,
+            "support": 638.0
+          },
+          "accuracy": 0.3542615484710475,
+          "macro avg": {
+            "precision": 0.2659066232356134,
+            "recall": 0.3510971786833855,
+            "f1-score": 0.2712853642886309,
+            "support": 3074.0
+          },
+          "weighted avg": {
+            "precision": 0.2726176322446606,
+            "recall": 0.3542615484710475,
+            "f1-score": 0.2765234949489713,
+            "support": 3074.0
+          }
+        }
+      }
+    },
+    "svm": {
+      "validation": {
+        "accuracy": 0.6962991971803407,
+        "macro_f1": 0.4726089179992526,
+        "classification_report": {
+          "empty_room": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1-score": 1.0,
+            "support": 2553.0
+          },
+          "walking": {
+            "precision": 0.49801113762927607,
+            "recall": 1.0,
+            "f1-score": 0.6648964418481147,
+            "support": 626.0
+          },
+          "sitting": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 595.0
+          },
+          "standing": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 630.0
+          },
+          "desk_work": {
+            "precision": 1.0,
+            "recall": 0.5362731152204836,
+            "f1-score": 0.6981481481481482,
+            "support": 703.0
+          },
+          "accuracy": 0.6962991971803407,
+          "macro avg": {
+            "precision": 0.4996022275258552,
+            "recall": 0.5072546230440966,
+            "f1-score": 0.4726089179992526,
+            "support": 5107.0
+          },
+          "weighted avg": {
+            "precision": 0.6986009344342915,
+            "recall": 0.6962991971803407,
+            "f1-score": 0.6775060350000134,
+            "support": 5107.0
+          }
+        }
+      },
+      "test": {
+        "accuracy": 0.357839947950553,
+        "macro_f1": 0.27346101517530086,
+        "classification_report": {
+          "empty_room": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 609.0
+          },
+          "walking": {
+            "precision": 0.3293543136190993,
+            "recall": 1.0,
+            "f1-score": 0.49551020408163265,
+            "support": 607.0
+          },
+          "sitting": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 594.0
+          },
+          "standing": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1-score": 0.0,
+            "support": 626.0
+          },
+          "desk_work": {
+            "precision": 1.0,
+            "recall": 0.7727272727272727,
+            "f1-score": 0.8717948717948718,
+            "support": 638.0
+          },
+          "accuracy": 0.357839947950553,
+          "macro avg": {
+            "precision": 0.2658708627238199,
+            "recall": 0.35454545454545455,
+            "f1-score": 0.27346101517530086,
+            "support": 3074.0
+          },
+          "weighted avg": {
+            "precision": 0.27258232542836475,
+            "recall": 0.357839947950553,
+            "f1-score": 0.2787832862988547,
+            "support": 3074.0
+          }
+        }
+      }
+    }
+  }
+}
