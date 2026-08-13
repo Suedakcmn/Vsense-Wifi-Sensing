@@ -15,7 +15,12 @@ from csi_utils import csi_to_amplitude, compute_motion_score
 from ml.windows import CSIWindow
 
 
-PASSTHROUGH_MESSAGE_TYPES = frozenset({"health", "node_status", "zone_prediction"})
+PASSTHROUGH_MESSAGE_TYPES = frozenset({
+    "ground_truth",
+    "health",
+    "node_status",
+    "zone_prediction",
+})
 
 
 @dataclass(frozen=True)

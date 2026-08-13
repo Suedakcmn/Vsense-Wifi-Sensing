@@ -25,6 +25,7 @@ class DashboardState:
         self.latest_prediction: dict | None = None
         self.active_alarm: dict | None = None
         self.latest_zone: dict | None = None
+        self.latest_ground_truth: dict | None = None
         self.motion_scores: deque[dict] = deque(maxlen=config.max_events)
         self.nodes: dict[str, dict] = {}
         self.events: deque[dict] = deque(maxlen=config.max_events)
@@ -48,6 +49,8 @@ class DashboardState:
             changed = self._apply_zone(record)
         elif message_type == "motion_score":
             changed = self._apply_motion_score(record)
+        elif message_type == "ground_truth":
+            changed = self._apply_ground_truth(record)
 
         if changed:
             self.revision += 1
@@ -124,6 +127,22 @@ class DashboardState:
         self.motion_scores.append(deepcopy(record))
         return True
 
+    def _apply_ground_truth(self, record: dict) -> bool:
+        timestamp = record.get("collector_ts_us")
+        targets = record.get("targets")
+        if not isinstance(timestamp, int) or not isinstance(targets, list):
+            return False
+        if not all(
+            isinstance(target, dict)
+            and all(isinstance(target.get(field), int) for field in (
+                "target_id", "x_mm", "y_mm", "speed_cm_s", "resolution_mm"
+            ))
+            for target in targets
+        ):
+            return False
+        self.latest_ground_truth = deepcopy(record)
+        return True
+
     def snapshot(self) -> dict:
         return {
             "schema_version": 1,
@@ -132,6 +151,7 @@ class DashboardState:
             "latest_prediction": deepcopy(self.latest_prediction),
             "active_alarm": deepcopy(self.active_alarm),
             "latest_zone": deepcopy(self.latest_zone),
+            "latest_ground_truth": deepcopy(self.latest_ground_truth),
             "motion_scores": [deepcopy(value) for value in self.motion_scores],
             "nodes": {
                 node_id: deepcopy(value)

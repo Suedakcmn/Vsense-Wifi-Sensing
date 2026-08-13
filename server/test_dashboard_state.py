@@ -89,6 +89,33 @@ class DashboardStateTest(unittest.TestCase):
             "scores": {"rx_01": "high"},
         }))
 
+    def test_tracks_valid_ld2450_ground_truth_without_event_flood(self):
+        state = DashboardState()
+        record = {
+            "message_type": "ground_truth",
+            "collector_ts_us": 10,
+            "node_id": "ld2450_01",
+            "targets": [{
+                "target_id": 1,
+                "x_mm": 250,
+                "y_mm": 1800,
+                "speed_cm_s": -12,
+                "resolution_mm": 320,
+            }],
+        }
+        self.assertTrue(state.apply(record))
+        snapshot = state.snapshot()
+        self.assertEqual(snapshot["latest_ground_truth"]["targets"][0]["y_mm"], 1800)
+        self.assertEqual(snapshot["events"], [])
+
+    def test_rejects_invalid_ld2450_ground_truth(self):
+        state = DashboardState()
+        self.assertFalse(state.apply({
+            "message_type": "ground_truth",
+            "collector_ts_us": 1,
+            "targets": "one",
+        }))
+
     def test_ignores_invalid_and_unknown_records(self):
         state = DashboardState()
         self.assertFalse(state.apply([]))

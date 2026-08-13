@@ -74,6 +74,24 @@ python server/run_dashboard.py --inactivity-seconds 10
 Production or evaluation runs must use the agreed real threshold rather than
 the shortened demo value.
 
+## Hardware-free LD2450 comparison
+
+While the launcher is running, publish simulated radar reference frames from a
+separate terminal:
+
+```bash
+python server/ld2450_simulator.py \
+  --transport mqtt \
+  --broker-host 127.0.0.1 \
+  --duration-seconds 10 \
+  --target-count 1
+```
+
+The LD2450 panel shows occupancy, target count, target coordinates, speed, and
+CSI/radar occupancy agreement. This agreement means only empty versus occupied;
+the radar does not provide walking, sitting, standing, or desk-work labels, so
+the panel must not present it as activity-class accuracy.
+
 ## Verification
 
 ```bash
