@@ -4,10 +4,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import torch
+from torch.utils.data import DataLoader
 
-from ml.features import extract_window_features, feature_names
+from ml.cnn_data import CNNTensorConfig, CSITensorIterableDataset, window_to_tensor
+from ml.features import extract_window_features, feature_names, normalize_amplitude
 from ml.windows import CSIWindow, WindowConfig, iter_session_windows
 from ml.train_baselines import repeat_from_session_id, split_by_repeat
+from ml.run_experiments import development_folds, validate_table
 import pandas as pd
 
 
@@ -23,6 +27,115 @@ def csi_row(timestamp, node_id, value=3):
 
 
 class MLPipelineTest(unittest.TestCase):
+    def test_cnn_window_tensor_has_fixed_shape_and_normalization(self):
+        timestamps = [0, 17_000, 51_000, 88_000, 131_000, 177_000]
+        rows = [
+            csi_row(timestamp, "rx_01", value=3 + index)
+            for index, timestamp in enumerate(timestamps)
+        ]
+        window = CSIWindow(
+            "s",
+            "walking",
+            "person",
+            0,
+            200_000,
+            {
+                "rx_01": rows,
+                "rx_02": [dict(row, node_id="rx_02") for row in rows],
+            },
+        )
+        tensor = window_to_tensor(
+            window,
+            [0, 1, 2],
+            CNNTensorConfig(sample_rate_hz=40, normalization="zscore"),
+        )
+        self.assertEqual(tuple(tensor.shape), (2, 8, 3))
+        self.assertEqual(tensor.dtype, torch.float32)
+        self.assertTrue(torch.isfinite(tensor).all())
+        self.assertTrue(
+            torch.allclose(tensor.mean(dim=1), torch.zeros((2, 3)), atol=1e-5)
+        )
+
+    def test_cnn_iterable_dataset_batches_tensors(self):
+        with TemporaryDirectory() as temporary_directory:
+            session_dir = Path(temporary_directory)
+            metadata = {
+                "session_id": "walking_r01",
+                "status": "completed",
+                "subject": "person",
+                "started_collector_ts_us": 0,
+                "ended_collector_ts_us": 2_000_000,
+            }
+            labels = {
+                "segments": [
+                    {
+                        "label": "walking",
+                        "start_collector_ts_us": 0,
+                        "end_collector_ts_us": 2_000_000,
+                    }
+                ]
+            }
+            (session_dir / "metadata.json").write_text(json.dumps(metadata))
+            (session_dir / "labels.json").write_text(json.dumps(labels))
+            rows = []
+            for timestamp in range(0, 2_000_000, 20_000):
+                for node_id in ("rx_01", "rx_02"):
+                    rows.append(csi_row(timestamp, node_id, value=3 + timestamp // 20_000))
+            rows.sort(key=lambda row: row["collector_ts_us"])
+            (session_dir / "csi.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows)
+            )
+            dataset = CSITensorIterableDataset(
+                [session_dir],
+                WindowConfig(
+                    duration_us=1_000_000,
+                    stride_us=1_000_000,
+                    trim_us=0,
+                    min_rows_per_node=20,
+                ),
+                [0, 1],
+                CNNTensorConfig(sample_rate_hz=40),
+            )
+            batch = next(iter(DataLoader(dataset, batch_size=2)))
+            self.assertEqual(tuple(batch["inputs"].shape), (2, 2, 40, 2))
+            self.assertEqual(batch["target"].tolist(), [1, 1])
+
+    def test_window_normalization_is_per_subcarrier(self):
+        amplitude = np.asarray(
+            [[1.0, 100.0], [2.0, 110.0], [3.0, 120.0]], dtype=np.float32
+        )
+        zscore = normalize_amplitude(amplitude, "zscore")
+        self.assertTrue(np.allclose(np.mean(zscore, axis=0), 0.0, atol=1e-6))
+        self.assertTrue(np.allclose(np.std(zscore, axis=0), 1.0, atol=1e-6))
+        robust = normalize_amplitude(amplitude, "robust")
+        self.assertTrue(np.allclose(np.median(robust, axis=0), 0.0, atol=1e-6))
+
+    def test_unknown_window_normalization_is_rejected(self):
+        with self.assertRaises(ValueError):
+            normalize_amplitude(np.ones((3, 2)), "invalid")
+
+    def test_development_cv_keeps_repeat_three_locked(self):
+        rows = []
+        for repeat in (1, 2, 3):
+            for label in ("empty_room", "walking", "sitting", "standing", "desk_work"):
+                rows.append(
+                    {
+                        "session_id": f"{label}_r{repeat:02d}",
+                        "subject": "person",
+                        "label": label,
+                        "window_start_us": 0,
+                        "window_end_us": 1,
+                        "feature": repeat,
+                    }
+                )
+        table = pd.DataFrame(rows)
+        validate_table(table)
+        folds = list(development_folds(table))
+        self.assertEqual(len(folds), 2)
+        for _, train, validation in folds:
+            used_sessions = set(train["session_id"]) | set(validation["session_id"])
+            self.assertFalse(any(session.endswith("_r03") for session in used_sessions))
+
     def test_split_is_session_repeat_based(self):
         table = pd.DataFrame({
             "session_id": ["a_r01", "b_r02", "c_r03"],
