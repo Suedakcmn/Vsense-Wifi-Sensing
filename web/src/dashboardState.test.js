@@ -66,8 +66,8 @@ test("explains actionable pipeline states", () => {
 
 test("formats known event types", () => {
   assert.equal(
-    eventLabel({ message_type: "inactivity_alarm", status: "raised", zone: "office" }),
-    "Alarm raised: office",
+    eventLabel({ message_type: "inactivity_alarm", status: "raised" }),
+    "Inactivity alarm: raised",
   );
   assert.equal(
     eventLabel({ message_type: "node_status", node_id: "rx_01", status: "online" }),

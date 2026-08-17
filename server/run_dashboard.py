@@ -11,7 +11,6 @@ from pathlib import Path
 
 from activity_model import ModelContractError
 from validate_model_artifact import validate_artifact
-from zone_predictor import ZonePredictorConfig
 
 
 def build_commands(args, python_executable: str) -> list[list[str]]:
@@ -41,20 +40,11 @@ def build_commands(args, python_executable: str) -> list[list[str]]:
     if args.model_version:
         predictor.extend(["--model-version", args.model_version])
 
-    zone = [
-        python_executable,
-        "server/zone_predictor.py",
-        "--config",
-        str(args.zone_config),
-    ]
-
     alarm = [
         python_executable,
         "server/inactivity_alarm.py",
         "--threshold-seconds",
         str(args.inactivity_seconds),
-        "--zone-max-age-seconds",
-        str(args.zone_max_age_seconds),
     ]
     dashboard = [
         python_executable,
@@ -68,18 +58,19 @@ def build_commands(args, python_executable: str) -> list[list[str]]:
         "--static-dir",
         str(args.static_dir),
     ]
-    return [collector, predictor, zone, alarm, dashboard]
+    return [collector, predictor, alarm, dashboard]
 
 
 def validate_paths(args):
     try:
-        validate_artifact(args.artifact_dir)
+        validation = validate_artifact(
+            args.artifact_dir,
+            require_final_classes=not args.allow_legacy_artifact,
+        )
     except (ModelContractError, OSError, ValueError) as exc:
         raise SystemExit(f"invalid model artifact: {exc}") from exc
-    try:
-        ZonePredictorConfig.from_path(args.zone_config)
-    except (OSError, ValueError) as exc:
-        raise SystemExit(f"invalid zone config: {exc}") from exc
+    for warning in validation["warnings"]:
+        print(f"Model artifact warning: {warning}", file=sys.stderr)
     if not (args.static_dir / "index.html").is_file():
         raise SystemExit(
             f"dashboard build not found: {args.static_dir / 'index.html'}; "
@@ -153,12 +144,11 @@ def parse_args():
     )
     parser.add_argument("--model-version")
     parser.add_argument(
-        "--zone-config",
-        type=Path,
-        default=Path("server/config/zones.json"),
+        "--allow-legacy-artifact",
+        action="store_true",
+        help="allow the five-class integration baseline; never use for final evaluation",
     )
     parser.add_argument("--inactivity-seconds", type=float, default=300.0)
-    parser.add_argument("--zone-max-age-seconds", type=float, default=30.0)
     parser.add_argument("--web-host", default="127.0.0.1")
     parser.add_argument("--web-port", type=int, default=8000)
     parser.add_argument("--max-events", type=int, default=100)

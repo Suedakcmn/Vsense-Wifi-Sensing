@@ -9,27 +9,26 @@ class DashboardStateTest(unittest.TestCase):
         prediction = {
             "message_type": "activity_prediction",
             "window_end_us": 10,
-            "activity": "sitting",
+            "activity": "standing",
             "confidence": 0.8,
         }
         raised = {
             "message_type": "inactivity_alarm",
             "timestamp_us": 20,
             "status": "raised",
-            "zone": "office",
+            "activity": "standing",
         }
         cleared = {
             "message_type": "inactivity_alarm",
             "timestamp_us": 30,
             "status": "cleared",
-            "zone": "office",
         }
         self.assertTrue(state.apply(prediction))
         self.assertTrue(state.apply(raised))
-        self.assertEqual(state.snapshot()["active_alarm"]["zone"], "office")
+        self.assertEqual(state.snapshot()["active_alarm"]["activity"], "standing")
         self.assertTrue(state.apply(cleared))
         snapshot = state.snapshot()
-        self.assertEqual(snapshot["latest_prediction"]["activity"], "sitting")
+        self.assertEqual(snapshot["latest_prediction"]["activity"], "standing")
         self.assertIsNone(snapshot["active_alarm"])
         self.assertEqual(snapshot["revision"], 3)
         self.assertEqual(len(snapshot["events"]), 3)
@@ -50,16 +49,6 @@ class DashboardStateTest(unittest.TestCase):
         node = state.snapshot()["nodes"]["rx_02"]
         self.assertEqual(node["status"], "online")
         self.assertEqual(node["health"]["csi_pps"], 83)
-
-    def test_accepts_future_zone_prediction_without_model_dependency(self):
-        state = DashboardState()
-        self.assertTrue(state.apply({
-            "message_type": "zone_prediction",
-            "timestamp_us": 50,
-            "zone": "kitchen",
-            "confidence": 0.7,
-        }))
-        self.assertEqual(state.snapshot()["latest_zone"]["zone"], "kitchen")
 
     def test_tracks_model_and_pipeline_status(self):
         state = DashboardState()

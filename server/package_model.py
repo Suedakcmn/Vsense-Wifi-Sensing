@@ -83,7 +83,11 @@ def package_model(
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
-    validate_artifact(output_dir, require_report=True)
+    validate_artifact(
+        output_dir,
+        require_report=True,
+        require_final_classes=True,
+    )
     return manifest
 
 

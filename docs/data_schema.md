@@ -18,7 +18,7 @@ The preferred logical format for replay/live testing is:
 | csi | Raw CSI values in [imag0, real0, imag1, real1, ...] format |
 | label | Optional label for recorded data only |
 | schema_version | `2` for CSI/telemetry; `1` for LD2450 ground truth |
-| message_type | Transport, inference, status, zone, alarm, or ground-truth record type |
+| message_type | Transport, inference, status, alarm, or ground-truth record type |
 | recorded_at | Collector receive time in UTC ISO-8601 form |
 | collector_ts_us | Collector receive time as Unix epoch microseconds |
 
@@ -42,13 +42,8 @@ modifying raw CSI:
 - `motion_score`: one relative score per receiver for a clean CSI window;
 - `activity_prediction`: activity, confidence, class probabilities, model
   version, and window timestamps;
-- `zone_prediction`: coarse named zone, confidence, source receiver, receiver
-  evidence, and calibration method;
-- `inactivity_alarm`: `raised`, `updated`, or `cleared` transition with activity
-  and fresh zone context.
-
-Zone output is room-level classification, not an `(x, y)` coordinate. See
-`docs/zone_prediction.md` for its complete contract.
+- `inactivity_alarm`: `raised` or `cleared` transition with the latest activity
+  and inactivity duration.
 
 ## LD2450 ground truth
 

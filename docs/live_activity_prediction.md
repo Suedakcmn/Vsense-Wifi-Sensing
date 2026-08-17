@@ -69,7 +69,7 @@ computer. Stop the pipeline with `Ctrl+C`; both processes terminate cleanly.
 
 The predictor accepts normalized CSI rows for the nodes named in
 `feature_config.json`. For `baseline_v1`, both `rx_01` and `rx_02` are required.
-Health, node-status, zone, ground-truth, model-status, and pipeline-status
+Health, node-status, ground-truth, model-status, and pipeline-status
 records pass through for downstream stages. Raw CSI does not pass through, so
 the web state is not flooded with high-rate samples. Unknown-node, malformed,
 duplicate, out-of-order, and wrong-length CSI records do not produce
@@ -115,7 +115,6 @@ Each completed clean window produces one compact JSON object on stdout:
   "probabilities": {
     "empty_room": 0.0,
     "walking": 1.0,
-    "sitting": 0.0,
     "standing": 0.0,
     "desk_work": 0.0
   }
@@ -145,8 +144,16 @@ or only `feature_config.json`.
 Before deployment, run:
 
 ```bash
-python server/validate_model_artifact.py dataset-v1/models/<new-model-version>
+python server/validate_model_artifact.py \
+  dataset-v1/models/<new-model-version> \
+  --require-report \
+  --require-final-classes
 ```
+
+The final class order is `empty_room`, `walking`, `standing`, `desk_work`.
+The checked-in baseline still contains the retired `sitting` class and remains
+available only as a legacy integration fixture while the final model is being
+selected.
 
 ## Verification
 

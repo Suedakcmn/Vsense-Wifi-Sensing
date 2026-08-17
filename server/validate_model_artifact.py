@@ -12,7 +12,13 @@ from activity_model import ModelContractError
 from models import load_activity_artifact
 
 
-EXPECTED_CLASSES = (
+FINAL_CLASSES = (
+    "empty_room",
+    "walking",
+    "standing",
+    "desk_work",
+)
+LEGACY_CLASSES = (
     "empty_room",
     "walking",
     "sitting",
@@ -29,15 +35,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_artifact(artifact_dir: Path | str, *, require_report: bool = False) -> dict:
+def validate_artifact(
+    artifact_dir: Path | str,
+    *,
+    require_report: bool = False,
+    require_final_classes: bool = False,
+) -> dict:
     directory = Path(artifact_dir)
     loaded = load_activity_artifact(directory)
     config = loaded.config
     classes = tuple(config.get("class_names", ()))
-    if classes != EXPECTED_CLASSES:
+    if classes not in {FINAL_CLASSES, LEGACY_CLASSES}:
         raise ModelContractError(
-            f"class_names must use the project order: {list(EXPECTED_CLASSES)}"
+            f"class_names must use the final project order: {list(FINAL_CLASSES)}"
         )
+    warnings = []
+    if classes == LEGACY_CLASSES:
+        message = "legacy integration artifact includes removed class: sitting"
+        if require_final_classes:
+            raise ModelContractError(message)
+        warnings.append(message)
     required_nodes = config.get("required_nodes")
     if required_nodes != ["rx_01", "rx_02"]:
         raise ModelContractError("required_nodes must be ordered as rx_01, rx_02")
@@ -55,7 +72,6 @@ def validate_artifact(artifact_dir: Path | str, *, require_report: bool = False)
     model_path = directory / model_name
     if not model_path.is_file():
         raise ModelContractError(f"missing configured model file: {model_path}")
-    warnings = []
     for name in ("metrics.json", "README.md"):
         if not (directory / name).is_file():
             message = f"recommended artifact report is missing: {name}"
@@ -82,6 +98,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact_dir", type=Path)
     parser.add_argument("--require-report", action="store_true")
+    parser.add_argument("--require-final-classes", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -89,7 +106,11 @@ def parse_args():
 def main():
     args = parse_args()
     try:
-        result = validate_artifact(args.artifact_dir, require_report=args.require_report)
+        result = validate_artifact(
+            args.artifact_dir,
+            require_report=args.require_report,
+            require_final_classes=args.require_final_classes,
+        )
     except (ModelContractError, OSError, ValueError) as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

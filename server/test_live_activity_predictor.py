@@ -204,7 +204,6 @@ class LiveActivityPredictorTest(unittest.TestCase):
             records = [
                 {"message_type": "node_status", "node_id": "rx_01", "status": "online"},
                 {"message_type": "health", "node_id": "rx_01", "csi_pps": 80},
-                {"message_type": "zone_prediction", "timestamp_us": 1, "zone": "office"},
                 csi_row(0, "rx_01"),
                 {"message_type": "ground_truth", "node_id": "ld2450_01"},
             ]
@@ -219,12 +218,12 @@ class LiveActivityPredictorTest(unittest.TestCase):
             passthrough = [
                 record["message_type"] for record in forwarded
                 if record["message_type"] in {
-                    "node_status", "health", "zone_prediction", "ground_truth"
+                    "node_status", "health", "ground_truth"
                 }
             ]
             self.assertEqual(
                 passthrough,
-                ["node_status", "health", "zone_prediction", "ground_truth"],
+                ["node_status", "health", "ground_truth"],
             )
 
     def test_main_stops_cleanly_on_keyboard_interrupt(self):

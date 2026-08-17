@@ -7,15 +7,12 @@ import inactivity_alarm
 from inactivity_alarm import InactivityAlarmConfig, InactivityAlarmEngine, run_stream
 
 
-def prediction(activity: str, seconds: float, zone: str | None = None) -> dict:
-    value = {
+def prediction(activity: str, seconds: float) -> dict:
+    return {
         "message_type": "activity_prediction",
         "activity": activity,
         "window_end_us": int(seconds * 1_000_000),
     }
-    if zone is not None:
-        value["zone"] = zone
-    return value
 
 
 class InactivityAlarmEngineTest(unittest.TestCase):
@@ -25,24 +22,23 @@ class InactivityAlarmEngineTest(unittest.TestCase):
         )
 
     def test_raises_once_when_threshold_is_reached(self):
-        self.assertEqual(self.engine.process(prediction("sitting", 10)), [])
-        self.assertEqual(self.engine.process(prediction("sitting", 309)), [])
-        events = self.engine.process(prediction("sitting", 310, zone="office"))
+        self.assertEqual(self.engine.process(prediction("standing", 10)), [])
+        self.assertEqual(self.engine.process(prediction("standing", 309)), [])
+        events = self.engine.process(prediction("standing", 310))
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["status"], "raised")
         self.assertEqual(events[0]["inactive_seconds"], 300.0)
-        self.assertEqual(events[0]["zone"], "office")
-        self.assertEqual(self.engine.process(prediction("standing", 400)), [])
+        self.assertNotIn("zone", events[0])
+        self.assertEqual(self.engine.process(prediction("desk_work", 400)), [])
 
     def test_movement_clears_active_alarm_and_resets_timer(self):
-        self.engine.process(prediction("standing", 10, zone="bedroom"))
+        self.engine.process(prediction("standing", 10))
         self.engine.process(prediction("standing", 310))
         events = self.engine.process(prediction("walking", 311))
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["status"], "cleared")
         self.assertEqual(events[0]["reason"], "movement_detected")
-        self.assertEqual(events[0]["zone"], "bedroom")
-        self.assertEqual(self.engine.process(prediction("sitting", 312)), [])
+        self.assertEqual(self.engine.process(prediction("desk_work", 312)), [])
 
     def test_empty_room_does_not_raise_person_inactivity_alarm(self):
         self.assertEqual(self.engine.process(prediction("empty_room", 10)), [])
@@ -58,49 +54,28 @@ class InactivityAlarmEngineTest(unittest.TestCase):
         self.assertEqual(events[0]["reason"], "room_empty")
 
     def test_inactive_classes_share_one_continuous_timer(self):
-        self.engine.process(prediction("sitting", 10))
-        self.engine.process(prediction("standing", 150))
-        events = self.engine.process(prediction("desk_work", 310))
+        self.engine.process(prediction("standing", 10))
+        self.engine.process(prediction("desk_work", 150))
+        events = self.engine.process(prediction("standing", 310))
         self.assertEqual(events[0]["status"], "raised")
         self.assertEqual(events[0]["inactive_seconds"], 300.0)
 
+    def test_removed_sitting_class_is_ignored(self):
+        self.assertEqual(self.engine.process(prediction("sitting", 10)), [])
+        self.assertIsNone(self.engine.inactive_since_us)
+
     def test_ignores_unknown_activity_without_resetting_state(self):
-        self.engine.process(prediction("sitting", 10))
+        self.engine.process(prediction("standing", 10))
         self.assertEqual(self.engine.process(prediction("unknown", 100)), [])
-        events = self.engine.process(prediction("sitting", 310))
+        events = self.engine.process(prediction("standing", 310))
         self.assertEqual(events[0]["status"], "raised")
 
     def test_ignores_duplicate_out_of_order_and_unrelated_messages(self):
-        self.engine.process(prediction("sitting", 10))
-        self.assertEqual(self.engine.process(prediction("sitting", 10)), [])
-        self.assertEqual(self.engine.process(prediction("sitting", 9)), [])
+        self.engine.process(prediction("standing", 10))
+        self.assertEqual(self.engine.process(prediction("standing", 10)), [])
+        self.assertEqual(self.engine.process(prediction("standing", 9)), [])
         self.assertEqual(self.engine.process({"message_type": "health"}), [])
         self.assertEqual(self.engine.last_timestamp_us, 10_000_000)
-
-    def test_uses_fresh_independent_zone_prediction(self):
-        self.engine.process({
-            "message_type": "zone_prediction",
-            "timestamp_us": 9_000_000,
-            "zone": "desk",
-            "confidence": 0.76,
-        })
-        self.engine.process(prediction("sitting", 10))
-        event = self.engine.process(prediction("sitting", 310))[0]
-        self.assertEqual(event["zone"], "unknown")
-        self.assertIsNone(event["zone_confidence"])
-
-    def test_updates_active_alarm_when_zone_changes(self):
-        self.engine.process(prediction("sitting", 10))
-        self.engine.process(prediction("sitting", 310))
-        events = self.engine.process({
-            "message_type": "zone_prediction",
-            "timestamp_us": 311_000_000,
-            "zone": "door",
-            "confidence": 0.8,
-        })
-        self.assertEqual(events[0]["status"], "updated")
-        self.assertEqual(events[0]["zone"], "door")
-        self.assertEqual(events[0]["zone_confidence"], 0.8)
 
     def test_rejects_invalid_config(self):
         with self.assertRaisesRegex(ValueError, "positive"):
@@ -108,7 +83,7 @@ class InactivityAlarmEngineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "overlap"):
             InactivityAlarmEngine(InactivityAlarmConfig(
                 threshold_seconds=10,
-                moving_activities=frozenset({"walking", "sitting"}),
+                moving_activities=frozenset({"walking", "standing"}),
             ))
 
 
@@ -118,8 +93,8 @@ class InactivityAlarmStreamTest(unittest.TestCase):
             InactivityAlarmConfig(threshold_seconds=10),
         )
         inputs = [
-            prediction("sitting", 1, zone="office"),
-            prediction("standing", 11),
+            prediction("standing", 1),
+            prediction("desk_work", 11),
             prediction("walking", 12),
         ]
         output = io.StringIO()

@@ -20,14 +20,14 @@ mosquitto -v
 
 ## Start the complete pipeline
 
-The launcher connects the collector, model, zone, alarm, and web stages and
+The launcher connects the collector, model, alarm, and web stages and
 serves the built dashboard:
 
 ```bash
 python server/run_dashboard.py \
   --mqtt-host 127.0.0.1 \
   --artifact-dir dataset-v1/models/baseline_v1 \
-  --zone-config server/config/zones.json \
+  --allow-legacy-artifact \
   --inactivity-seconds 300
 ```
 
@@ -47,9 +47,7 @@ The launcher reads the variable named by `--mqtt-password-env` and never
 requires a password command-line argument.
 
 The model strip reports the loaded artifact contract. Pipeline warnings explain
-missing receivers or a window that is still filling. The zone card reports the
-coarse zone, confidence, source receiver, and normalized receiver evidence.
-Zone calibration and limitations are documented in `docs/zone_prediction.md`.
+missing receivers or a window that is still filling.
 
 Validate or package a final model before launching it:
 
@@ -104,10 +102,10 @@ python server/csi_replay.py \
   --delay 0.002
 ```
 
-The current baseline predicts this recording as `standing`, not `sitting`.
-Both are intentionally inactive classes, so the dashboard raises the alarm
-after 10 seconds of recording time. This verifies the alarm path but also
-demonstrates why the baseline's activity-class accuracy must not be overstated.
+The legacy baseline predicts this retired sitting recording as `standing`,
+which is an inactive final class, so the dashboard raises the alarm after 10
+seconds of recording time. This verifies the alarm path but does not make the
+recording part of the final four-class evaluation.
 
 ## Hardware-free LD2450 comparison
 
@@ -124,7 +122,7 @@ python server/ld2450_simulator.py \
 
 The LD2450 panel shows occupancy, target count, target coordinates, speed, and
 CSI/radar occupancy agreement. This agreement means only empty versus occupied;
-the radar does not provide walking, sitting, standing, or desk-work labels, so
+the radar does not provide walking, standing, or desk-work labels, so
 the panel must not present it as activity-class accuracy.
 
 ## Verification

@@ -24,7 +24,6 @@ class DashboardState:
         self.config = config
         self.latest_prediction: dict | None = None
         self.active_alarm: dict | None = None
-        self.latest_zone: dict | None = None
         self.latest_ground_truth: dict | None = None
         self.model_status: dict | None = None
         self.pipeline_status: dict[str, dict] = {}
@@ -47,8 +46,6 @@ class DashboardState:
             changed = self._apply_node_status(record)
         elif message_type == "health":
             changed = self._apply_health(record)
-        elif message_type == "zone_prediction":
-            changed = self._apply_zone(record)
         elif message_type == "motion_score":
             changed = self._apply_motion_score(record)
         elif message_type == "ground_truth":
@@ -74,9 +71,9 @@ class DashboardState:
     def _apply_alarm(self, record: dict) -> bool:
         status = record.get("status")
         timestamp = record.get("timestamp_us")
-        if status not in {"raised", "updated", "cleared"} or not isinstance(timestamp, int):
+        if status not in {"raised", "cleared"} or not isinstance(timestamp, int):
             return False
-        if status in {"raised", "updated"}:
+        if status == "raised":
             self.active_alarm = deepcopy(record)
         else:
             self.active_alarm = None
@@ -106,15 +103,6 @@ class DashboardState:
             return False
         node = self.nodes.setdefault(node_id, {"node_id": node_id})
         node["health"] = deepcopy(record)
-        return True
-
-    def _apply_zone(self, record: dict) -> bool:
-        zone = record.get("zone")
-        timestamp = record.get("timestamp_us")
-        if not isinstance(zone, str) or not zone or not isinstance(timestamp, int):
-            return False
-        self.latest_zone = deepcopy(record)
-        self.events.append(deepcopy(record))
         return True
 
     def _apply_motion_score(self, record: dict) -> bool:
@@ -172,7 +160,6 @@ class DashboardState:
             "revision": self.revision,
             "latest_prediction": deepcopy(self.latest_prediction),
             "active_alarm": deepcopy(self.active_alarm),
-            "latest_zone": deepcopy(self.latest_zone),
             "latest_ground_truth": deepcopy(self.latest_ground_truth),
             "model_status": deepcopy(self.model_status),
             "pipeline_status": deepcopy(self.pipeline_status),

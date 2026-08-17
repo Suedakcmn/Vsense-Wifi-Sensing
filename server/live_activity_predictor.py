@@ -19,7 +19,6 @@ PASSTHROUGH_MESSAGE_TYPES = frozenset({
     "ground_truth",
     "health",
     "node_status",
-    "zone_prediction",
     "model_status",
     "pipeline_status",
 })

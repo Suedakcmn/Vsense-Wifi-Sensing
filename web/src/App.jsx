@@ -14,7 +14,6 @@ import {
 const ACTIVITY_LABELS = {
   empty_room: "Empty room",
   walking: "Walking",
-  sitting: "Sitting",
   standing: "Standing",
   desk_work: "Desk work",
 };
@@ -144,48 +143,6 @@ function RadarReference({ prediction, groundTruth }) {
   );
 }
 
-function ZoneCard({ prediction }) {
-  const scores = Object.entries(prediction?.node_scores ?? {}).sort((a, b) => b[1] - a[1]);
-  const zone = prediction?.zone ?? "unknown";
-  const configuredZones = Object.keys(prediction?.zone_scores ?? {});
-  const zones = configuredZones.length ? configuredZones : ["desk", "door", "window"];
-  return (
-    <article className="zone-card panel">
-      <p className="eyebrow">Estimated zone</p>
-      <div className={`zone-map zone-${zone}`}>
-        {zones.map((zoneName) => (
-          <div className={`zone-area ${zoneName === zone ? "active" : ""}`} key={zoneName}>
-            <span>{zoneName}</span>
-            {prediction?.zone_scores?.[zoneName] !== undefined && (
-              <small>{percentage(prediction.zone_scores[zoneName])}</small>
-            )}
-          </div>
-        ))}
-        {(zone === "unknown" || zone === "unoccupied") && (
-          <div className="zone-overlay">{zone}</div>
-        )}
-      </div>
-      <dl className="zone-details">
-        <div><dt>Confidence</dt><dd>{percentage(prediction?.confidence)}</dd></div>
-        <div><dt>Source</dt><dd>{prediction?.source_node ?? "—"}</dd></div>
-        <div><dt>Resolution</dt><dd>Coarse zone</dd></div>
-      </dl>
-      {scores.length > 0 && (
-        <div className="zone-scores">
-          {scores.map(([nodeId, score]) => (
-            <div key={nodeId}>
-              <span>{nodeId}</span>
-              <div className="bar"><span style={{ width: percentage(score) }} /></div>
-              <strong>{percentage(score)}</strong>
-            </div>
-          ))}
-        </div>
-      )}
-      <p className="muted motion-note">Receiver comparison estimates a room-level zone, not a point coordinate.</p>
-    </article>
-  );
-}
-
 function ModelCard({ model, prediction }) {
   const value = model ?? (prediction ? {
     model_version: prediction.model_version,
@@ -229,7 +186,7 @@ export default function App() {
         <section className="alarm-banner" aria-live="assertive">
           <div>
             <p className="eyebrow">Inactivity alert</p>
-            <strong>{state.active_alarm.zone ?? "Unknown zone"}</strong>
+            <strong>{ACTIVITY_LABELS[state.active_alarm.activity] ?? state.active_alarm.activity}</strong>
           </div>
           <span>{Math.round(state.active_alarm.inactive_seconds)} seconds inactive</span>
         </section>
@@ -246,7 +203,7 @@ export default function App() {
 
       <ModelCard model={state.model_status} prediction={prediction} />
 
-      <section className="overview-grid">
+      <section>
         <article className="activity-card panel">
           <p className="eyebrow">Current activity</p>
           <div className="activity-value">
@@ -266,7 +223,6 @@ export default function App() {
           </div>
         </article>
 
-        <ZoneCard prediction={state.latest_zone} />
       </section>
 
       <MotionChart points={state.motion_scores} />

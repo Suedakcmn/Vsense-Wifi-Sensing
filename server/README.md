@@ -9,12 +9,12 @@ legacy experiments.
 The final application pipeline is launched with `run_dashboard.py`:
 
 ```text
-MQTT collector → activity predictor → zone predictor → inactivity alarm
+MQTT collector → activity predictor → inactivity alarm
 → FastAPI/WebSocket dashboard
 ```
 
-See `docs/live_dashboard.md`, `docs/live_activity_prediction.md`, and
-`docs/zone_prediction.md` for the final run commands and artifact contracts.
+See `docs/live_dashboard.md` and `docs/live_activity_prediction.md` for the
+final run commands and artifact contracts.
 
 ## Setup
 

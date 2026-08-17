@@ -3,7 +3,6 @@ export function createEmptyState() {
     revision: 0,
     latest_prediction: null,
     active_alarm: null,
-    latest_zone: null,
     latest_ground_truth: null,
     model_status: null,
     pipeline_status: {},
@@ -21,7 +20,6 @@ export function normalizeSnapshot(value) {
     revision: Number.isInteger(value.revision) ? value.revision : 0,
     latest_prediction: value.latest_prediction ?? null,
     active_alarm: value.active_alarm ?? null,
-    latest_zone: value.latest_zone ?? null,
     latest_ground_truth: value.latest_ground_truth ?? null,
     model_status: value.model_status ?? null,
     pipeline_status: value.pipeline_status && typeof value.pipeline_status === "object" ? value.pipeline_status : {},
@@ -98,11 +96,9 @@ export function eventLabel(event) {
     case "activity_prediction":
       return `Activity: ${event.activity ?? "unknown"}`;
     case "inactivity_alarm":
-      return `Alarm ${event.status ?? "unknown"}: ${event.zone ?? "unknown"}`;
+      return `Inactivity alarm: ${event.status ?? "unknown"}`;
     case "node_status":
       return `${event.node_id ?? "node"}: ${event.status ?? "unknown"}`;
-    case "zone_prediction":
-      return `Zone: ${event.zone ?? "unknown"}`;
     case "pipeline_status":
       return `Pipeline: ${event.status ?? "unknown"}`;
     default:
