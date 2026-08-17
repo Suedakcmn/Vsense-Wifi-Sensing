@@ -61,6 +61,26 @@ class DashboardStateTest(unittest.TestCase):
         }))
         self.assertEqual(state.snapshot()["latest_zone"]["zone"], "kitchen")
 
+    def test_tracks_model_and_pipeline_status(self):
+        state = DashboardState()
+        self.assertTrue(state.apply({
+            "message_type": "model_status",
+            "model_version": "svm_v2",
+            "status": "ready",
+        }))
+        self.assertTrue(state.apply({
+            "message_type": "pipeline_status",
+            "component": "activity_predictor",
+            "status": "waiting",
+            "reason": "missing_rx",
+        }))
+        snapshot = state.snapshot()
+        self.assertEqual(snapshot["model_status"]["model_version"], "svm_v2")
+        self.assertEqual(
+            snapshot["pipeline_status"]["activity_predictor"]["reason"],
+            "missing_rx",
+        )
+
     def test_keeps_bounded_motion_score_history(self):
         state = DashboardState(DashboardStateConfig(max_events=2))
         for timestamp in (1, 2, 3):

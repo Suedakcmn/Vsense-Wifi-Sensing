@@ -6,6 +6,7 @@ import {
   motionSeries,
   normalizeSnapshot,
   percentage,
+  pipelineMessage,
   radarComparison,
   websocketUrl,
 } from "./dashboardState.js";
@@ -43,6 +44,14 @@ test("formats confidence safely", () => {
   assert.equal(percentage(0.728), "73%");
   assert.equal(percentage(2), "100%");
   assert.equal(percentage(undefined), "—");
+});
+
+test("explains actionable pipeline states", () => {
+  assert.match(
+    pipelineMessage({ status: "waiting", reason: "missing_rx" }),
+    /required receiver/,
+  );
+  assert.equal(pipelineMessage({ status: "ready" }), null);
 });
 
 test("formats known event types", () => {

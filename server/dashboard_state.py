@@ -26,6 +26,8 @@ class DashboardState:
         self.active_alarm: dict | None = None
         self.latest_zone: dict | None = None
         self.latest_ground_truth: dict | None = None
+        self.model_status: dict | None = None
+        self.pipeline_status: dict[str, dict] = {}
         self.motion_scores: deque[dict] = deque(maxlen=config.max_events)
         self.nodes: dict[str, dict] = {}
         self.events: deque[dict] = deque(maxlen=config.max_events)
@@ -51,6 +53,10 @@ class DashboardState:
             changed = self._apply_motion_score(record)
         elif message_type == "ground_truth":
             changed = self._apply_ground_truth(record)
+        elif message_type == "model_status":
+            changed = self._apply_model_status(record)
+        elif message_type == "pipeline_status":
+            changed = self._apply_pipeline_status(record)
 
         if changed:
             self.revision += 1
@@ -68,9 +74,9 @@ class DashboardState:
     def _apply_alarm(self, record: dict) -> bool:
         status = record.get("status")
         timestamp = record.get("timestamp_us")
-        if status not in {"raised", "cleared"} or not isinstance(timestamp, int):
+        if status not in {"raised", "updated", "cleared"} or not isinstance(timestamp, int):
             return False
-        if status == "raised":
+        if status in {"raised", "updated"}:
             self.active_alarm = deepcopy(record)
         else:
             self.active_alarm = None
@@ -143,6 +149,22 @@ class DashboardState:
         self.latest_ground_truth = deepcopy(record)
         return True
 
+    def _apply_model_status(self, record: dict) -> bool:
+        model_version = record.get("model_version")
+        status = record.get("status")
+        if not isinstance(model_version, str) or not model_version or not isinstance(status, str):
+            return False
+        self.model_status = deepcopy(record)
+        return True
+
+    def _apply_pipeline_status(self, record: dict) -> bool:
+        component = record.get("component")
+        status = record.get("status")
+        if not isinstance(component, str) or not component or not isinstance(status, str):
+            return False
+        self.pipeline_status[component] = deepcopy(record)
+        return True
+
     def snapshot(self) -> dict:
         return {
             "schema_version": 1,
@@ -152,6 +174,8 @@ class DashboardState:
             "active_alarm": deepcopy(self.active_alarm),
             "latest_zone": deepcopy(self.latest_zone),
             "latest_ground_truth": deepcopy(self.latest_ground_truth),
+            "model_status": deepcopy(self.model_status),
+            "pipeline_status": deepcopy(self.pipeline_status),
             "motion_scores": [deepcopy(value) for value in self.motion_scores],
             "nodes": {
                 node_id: deepcopy(value)

@@ -6,6 +6,7 @@ import {
   motionSeries,
   normalizeSnapshot,
   percentage,
+  pipelineMessage,
   radarComparison,
   websocketUrl,
 } from "./dashboardState.js";
@@ -72,7 +73,7 @@ function NodeCard({ node }) {
       </div>
       <dl>
         <div><dt>CSI rate</dt><dd>{pps ?? "—"} pps</dd></div>
-        <div><dt>RSSI</dt><dd>{node.health?.rssi ?? "—"} dBm</dd></div>
+        <div><dt>RSSI</dt><dd>{node.health?.last_rssi ?? node.health?.rssi ?? "—"} dBm</dd></div>
         <div><dt>Source</dt><dd>{node.status_source ?? "—"}</dd></div>
       </dl>
     </article>
@@ -143,13 +144,72 @@ function RadarReference({ prediction, groundTruth }) {
   );
 }
 
+function ZoneCard({ prediction }) {
+  const scores = Object.entries(prediction?.node_scores ?? {}).sort((a, b) => b[1] - a[1]);
+  const zone = prediction?.zone ?? "unknown";
+  const configuredZones = Object.keys(prediction?.zone_scores ?? {});
+  const zones = configuredZones.length ? configuredZones : ["desk", "door", "window"];
+  return (
+    <article className="zone-card panel">
+      <p className="eyebrow">Estimated zone</p>
+      <div className={`zone-map zone-${zone}`}>
+        {zones.map((zoneName) => (
+          <div className={`zone-area ${zoneName === zone ? "active" : ""}`} key={zoneName}>
+            <span>{zoneName}</span>
+            {prediction?.zone_scores?.[zoneName] !== undefined && (
+              <small>{percentage(prediction.zone_scores[zoneName])}</small>
+            )}
+          </div>
+        ))}
+        {(zone === "unknown" || zone === "unoccupied") && (
+          <div className="zone-overlay">{zone}</div>
+        )}
+      </div>
+      <dl className="zone-details">
+        <div><dt>Confidence</dt><dd>{percentage(prediction?.confidence)}</dd></div>
+        <div><dt>Source</dt><dd>{prediction?.source_node ?? "—"}</dd></div>
+        <div><dt>Resolution</dt><dd>Coarse zone</dd></div>
+      </dl>
+      {scores.length > 0 && (
+        <div className="zone-scores">
+          {scores.map(([nodeId, score]) => (
+            <div key={nodeId}>
+              <span>{nodeId}</span>
+              <div className="bar"><span style={{ width: percentage(score) }} /></div>
+              <strong>{percentage(score)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="muted motion-note">Receiver comparison estimates a room-level zone, not a point coordinate.</p>
+    </article>
+  );
+}
+
+function ModelCard({ model, prediction }) {
+  const value = model ?? (prediction ? {
+    model_version: prediction.model_version,
+    status: "ready",
+  } : null);
+  return (
+    <section className="panel model-strip">
+      <div><span>Model</span><strong>{value?.model_version ?? "Waiting"}</strong></div>
+      <div><span>Type</span><strong>{value?.model_type ?? "—"}</strong></div>
+      <div><span>Window</span><strong>{value?.window_seconds ? `${value.window_seconds} s` : "—"}</strong></div>
+      <div><span>Normalization</span><strong>{value?.normalization ?? "—"}</strong></div>
+      <div><span>Status</span><strong className={value?.status === "ready" ? "agree" : ""}>{value?.status ?? "waiting"}</strong></div>
+    </section>
+  );
+}
+
 export default function App() {
   const { state, connection } = useDashboardSocket();
   const prediction = state.latest_prediction;
   const probabilities = prediction?.probabilities ?? {};
   const nodes = useMemo(() => Object.values(state.nodes), [state.nodes]);
   const events = [...state.events].reverse().slice(0, 12);
-  const zone = state.latest_zone?.zone ?? prediction?.zone ?? "unknown";
+  const predictorStatus = state.pipeline_status.activity_predictor;
+  const statusMessage = pipelineMessage(predictorStatus);
 
   return (
     <main className="app-shell">
@@ -175,6 +235,17 @@ export default function App() {
         </section>
       )}
 
+      {statusMessage && (
+        <section className="pipeline-banner" role="status">
+          <strong>{statusMessage}</strong>
+          {predictorStatus?.details?.missing_nodes?.length > 0 && (
+            <span>Missing: {predictorStatus.details.missing_nodes.join(", ")}</span>
+          )}
+        </section>
+      )}
+
+      <ModelCard model={state.model_status} prediction={prediction} />
+
       <section className="overview-grid">
         <article className="activity-card panel">
           <p className="eyebrow">Current activity</p>
@@ -195,16 +266,7 @@ export default function App() {
           </div>
         </article>
 
-        <article className="zone-card panel">
-          <p className="eyebrow">Estimated zone</p>
-          <div className="zone-map">
-            <div className="zone-marker" />
-            <span>{zone}</span>
-          </div>
-          <p className="muted">
-            Coarse zone output will appear here when the signal comparison module is connected.
-          </p>
-        </article>
+        <ZoneCard prediction={state.latest_zone} />
       </section>
 
       <MotionChart points={state.motion_scores} />
