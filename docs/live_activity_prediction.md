@@ -20,22 +20,32 @@ the Week 6 target of meaningful accuracy in at least four classes. See
 
 ## Model artifact contract
 
-An artifact directory must contain:
+An artifact directory contains a model selected by `model_type`:
 
 ```text
 <artifact-dir>/
 ├── feature_config.json
-└── model.joblib
+├── model.joblib or model.pt
+├── metrics.json
+├── manifest.json
+└── README.md
 ```
 
-At startup, `server/activity_model.py` verifies that:
+At startup, the artifact loader selects the scikit-learn or lazy TorchScript
+adapter and verifies that:
 
 - the config schema version is supported;
 - model and config class sets match;
 - the fitted model expects the configured number of features;
 - feature names are unique;
 - window, stride, gap, node, and subcarrier settings are present;
-- the model supports both `predict` and `predict_proba`.
+- scikit-learn models support both `predict` and `predict_proba`;
+- TorchScript models produce one logit per configured class.
+
+Torch CNN artifacts additionally define `sample_rate_hz`, `normalization`,
+`tensor_shape`, receiver order, and subcarrier order. The live adapter performs
+time alignment, fixed-rate interpolation, and per-subcarrier z-score using the
+artifact contract. PyTorch is imported only when a Torch artifact is selected.
 
 Before every window prediction, the runtime feature names and ordering are
 compared with `feature_config.json`. Inference stops with a clear contract error
@@ -59,9 +69,9 @@ computer. Stop the pipeline with `Ctrl+C`; both processes terminate cleanly.
 
 The predictor accepts normalized CSI rows for the nodes named in
 `feature_config.json`. For `baseline_v1`, both `rx_01` and `rx_02` are required.
-Health, node-status, and future zone-prediction records pass through for the
-dashboard. Raw CSI and ground-truth records do not pass through, so the web
-state is not flooded with high-rate samples. Unknown-node, malformed,
+Health, node-status, zone, ground-truth, model-status, and pipeline-status
+records pass through for downstream stages. Raw CSI does not pass through, so
+the web state is not flooded with high-rate samples. Unknown-node, malformed,
 duplicate, out-of-order, and wrong-length CSI records do not produce
 predictions.
 
@@ -118,9 +128,9 @@ its classes in a different internal order.
 
 ## Updating the model
 
-The inference code must not hard-code the current window duration,
+The inference code does not hard-code the current window duration,
 subcarriers, features, or class list. When a new model is selected, package its
-compatible `model.joblib` and `feature_config.json` together and point
+compatible model file and `feature_config.json` together and point
 `--artifact-dir` at that directory:
 
 ```bash
@@ -131,6 +141,12 @@ python server/live_activity_predictor.py \
 If the feature extractor changes incompatibly, increment `schema_version` and
 update the inference adapter deliberately. Do not replace only `model.joblib`
 or only `feature_config.json`.
+
+Before deployment, run:
+
+```bash
+python server/validate_model_artifact.py dataset-v1/models/<new-model-version>
+```
 
 ## Verification
 

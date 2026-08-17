@@ -6,6 +6,16 @@ normalizes them into JSONL, optionally records the stream, and emits an `offline
 after five seconds without any message. `udp_collector.py` remains only for
 legacy experiments.
 
+The final application pipeline is launched with `run_dashboard.py`:
+
+```text
+MQTT collector → activity predictor → zone predictor → inactivity alarm
+→ FastAPI/WebSocket dashboard
+```
+
+See `docs/live_dashboard.md`, `docs/live_activity_prediction.md`, and
+`docs/zone_prediction.md` for the final run commands and artifact contracts.
+
 ## Setup
 
 ```bash

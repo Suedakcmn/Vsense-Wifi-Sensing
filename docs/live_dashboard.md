@@ -20,12 +20,14 @@ mosquitto -v
 
 ## Start the complete pipeline
 
-The launcher connects the four existing stages and serves the built dashboard:
+The launcher connects the collector, model, zone, alarm, and web stages and
+serves the built dashboard:
 
 ```bash
 python server/run_dashboard.py \
   --mqtt-host 127.0.0.1 \
   --artifact-dir dataset-v1/models/baseline_v1 \
+  --zone-config server/config/zones.json \
   --inactivity-seconds 300
 ```
 
@@ -43,6 +45,23 @@ python server/run_dashboard.py \
 
 The launcher reads the variable named by `--mqtt-password-env` and never
 requires a password command-line argument.
+
+The model strip reports the loaded artifact contract. Pipeline warnings explain
+missing receivers or a window that is still filling. The zone card reports the
+coarse zone, confidence, source receiver, and normalized receiver evidence.
+Zone calibration and limitations are documented in `docs/zone_prediction.md`.
+
+Validate or package a final model before launching it:
+
+```bash
+python server/validate_model_artifact.py dataset-v1/models/final_v1
+
+python server/package_model.py \
+  --model /path/to/model.joblib \
+  --config /path/to/feature_config.json \
+  --metrics /path/to/metrics.json \
+  --output dataset-v1/models/final_v1
+```
 
 ## Hardware-free demo
 
