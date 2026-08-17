@@ -2,11 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createEmptyState,
   eventLabel,
   normalizeSnapshot,
   percentage,
   websocketUrl,
 } from "./dashboardState.js";
+
+test("creates isolated initial dashboard state", () => {
+  const first = createEmptyState();
+  const second = createEmptyState();
+  first.nodes.rx_01 = { status: "online" };
+  first.events.push({ message_type: "node_status" });
+  assert.deepEqual(second.nodes, {});
+  assert.deepEqual(second.events, []);
+});
 
 test("normalizes a dashboard snapshot", () => {
   const snapshot = normalizeSnapshot({
