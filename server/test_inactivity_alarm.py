@@ -77,6 +77,31 @@ class InactivityAlarmEngineTest(unittest.TestCase):
         self.assertEqual(self.engine.process({"message_type": "health"}), [])
         self.assertEqual(self.engine.last_timestamp_us, 10_000_000)
 
+    def test_uses_fresh_independent_zone_prediction(self):
+        self.engine.process({
+            "message_type": "zone_prediction",
+            "timestamp_us": 9_000_000,
+            "zone": "desk",
+            "confidence": 0.76,
+        })
+        self.engine.process(prediction("sitting", 10))
+        event = self.engine.process(prediction("sitting", 310))[0]
+        self.assertEqual(event["zone"], "unknown")
+        self.assertIsNone(event["zone_confidence"])
+
+    def test_updates_active_alarm_when_zone_changes(self):
+        self.engine.process(prediction("sitting", 10))
+        self.engine.process(prediction("sitting", 310))
+        events = self.engine.process({
+            "message_type": "zone_prediction",
+            "timestamp_us": 311_000_000,
+            "zone": "door",
+            "confidence": 0.8,
+        })
+        self.assertEqual(events[0]["status"], "updated")
+        self.assertEqual(events[0]["zone"], "door")
+        self.assertEqual(events[0]["zone_confidence"], 0.8)
+
     def test_rejects_invalid_config(self):
         with self.assertRaisesRegex(ValueError, "positive"):
             InactivityAlarmEngine(InactivityAlarmConfig(threshold_seconds=0))

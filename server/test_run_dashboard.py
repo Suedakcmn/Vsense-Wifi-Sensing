@@ -24,7 +24,9 @@ def arguments(root: Path):
         offline_timeout=5.0,
         artifact_dir=root / "model",
         model_version="test_v1",
+        zone_config=root / "zones.json",
         inactivity_seconds=30.0,
+        zone_max_age_seconds=15.0,
         web_host="127.0.0.1",
         web_port=8000,
         max_events=50,
@@ -33,15 +35,16 @@ def arguments(root: Path):
 
 
 class RunDashboardTest(unittest.TestCase):
-    def test_builds_four_stage_pipeline_without_password_on_command_line(self):
+    def test_builds_five_stage_pipeline_without_password_on_command_line(self):
         with TemporaryDirectory() as temporary_directory:
             args = arguments(Path(temporary_directory))
             commands = build_commands(args, "/python")
-            self.assertEqual(len(commands), 4)
+            self.assertEqual(len(commands), 5)
             self.assertIn("server/mqtt_collector.py", commands[0])
             self.assertIn("server/live_activity_predictor.py", commands[1])
-            self.assertIn("server/inactivity_alarm.py", commands[2])
-            self.assertIn("server/dashboard_api.py", commands[3])
+            self.assertIn("server/zone_predictor.py", commands[2])
+            self.assertIn("server/inactivity_alarm.py", commands[3])
+            self.assertIn("server/dashboard_api.py", commands[4])
             self.assertNotIn("--password", commands[0])
 
     def test_reads_optional_password_from_named_environment_variable(self):
@@ -61,14 +64,19 @@ class RunDashboardTest(unittest.TestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             args = arguments(root)
-            args.artifact_dir.mkdir()
             args.static_dir.mkdir()
-            (args.artifact_dir / "model.joblib").touch()
-            (args.artifact_dir / "feature_config.json").write_text("{}")
             (args.static_dir / "index.html").write_text("dashboard")
-            validate_paths(args)
+            with (
+                patch("run_dashboard.validate_artifact"),
+                patch("run_dashboard.ZonePredictorConfig.from_path"),
+            ):
+                validate_paths(args)
             (args.static_dir / "index.html").unlink()
-            with self.assertRaisesRegex(SystemExit, "dashboard build not found"):
+            with (
+                patch("run_dashboard.validate_artifact"),
+                patch("run_dashboard.ZonePredictorConfig.from_path"),
+                self.assertRaisesRegex(SystemExit, "dashboard build not found"),
+            ):
                 validate_paths(args)
 
     def test_monitor_reports_failed_stage(self):
