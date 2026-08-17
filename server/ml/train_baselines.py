@@ -21,10 +21,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-
-CLASS_NAMES = ["empty_room", "walking", "sitting", "standing", "desk_work"]
-META_COLUMNS = {"session_id", "subject", "label", "window_start_us", "window_end_us"}
-
+from ml.constants import CLASS_NAMES, META_COLUMNS
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
