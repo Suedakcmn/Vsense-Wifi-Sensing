@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "model_version": "cnn_dev_candidate_v1",
+  "model_type": "torch_cnn",
+  "model_file": "model.pt",
+  "window_seconds": 2.0,
+  "stride_seconds": 1.0,
+  "max_gap_ms": 500.0,
+  "min_rows_per_node": 20,
+  "required_nodes": [
+    "rx_01",
+    "rx_02"
+  ],
+  "selected_subcarriers": [
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    49,
+    58,
+    59
+  ],
+  "class_names": [
+    "empty_room",
+    "walking",
+    "standing",
+    "desk_work"
+  ],
+  "sample_rate_hz": 40.0,
+  "normalization": "zscore",
+  "tensor_shape": [
+    2,
+    80,
+    20
+  ]
+}
