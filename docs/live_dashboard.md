@@ -61,6 +61,25 @@ python server/package_model.py \
   --output dataset-v1/models/final_v1
 ```
 
+For the CNN training output, export the selected checkpoint directly into the
+live TorchScript artifact contract:
+
+```bash
+python server/ml/export_cnn_artifact.py \
+  --checkpoint /path/to/selected-run/best_model.pt \
+  --metrics /path/to/selected-run/metrics.json \
+  --output dataset-v1/models/final_v1
+
+python server/validate_model_artifact.py \
+  dataset-v1/models/final_v1 \
+  --require-report \
+  --require-final-classes
+```
+
+The export command validates the four-class order, receiver order, selected
+subcarriers, resampling rate, normalization, and tensor shape before packaging
+the model. Do not export a development-fold checkpoint as the final model.
+
 ## Hardware-free demo
 
 Start the launcher, then replay a real two-node CSI session in a second
