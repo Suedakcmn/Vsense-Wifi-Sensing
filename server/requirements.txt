@@ -4,4 +4,5 @@ matplotlib
 pyarrow
 paho-mqtt
 scipy
-
+scikit-learn
+joblib
