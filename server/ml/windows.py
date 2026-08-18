@@ -129,8 +129,14 @@ def iter_session_windows(
     yield from emit_ready_windows(usable_end)
 
 
-def discover_main_sessions(dataset_dir: Path) -> list[Path]:
-    """Select the canonical three repeats for each modelled scenario."""
+def discover_main_sessions(
+    dataset_dir: Path,
+    repeats: tuple[int, ...] = (1, 2, 3),
+) -> list[Path]:
+    """Select exactly one completed session per scenario and requested repeat."""
+    requested_repeats = tuple(dict.fromkeys(repeats))
+    if not requested_repeats or any(repeat <= 0 for repeat in requested_repeats):
+        raise ValueError("requested repeats must be unique positive integers")
     candidates: dict[tuple[str, int], list[Path]] = {}
     for session_dir in (dataset_dir / "sessions").iterdir():
         metadata_path = session_dir / "metadata.json"
@@ -141,13 +147,13 @@ def discover_main_sessions(dataset_dir: Path) -> list[Path]:
         repeat = metadata.get("repeat")
         if scenario not in set(CLASS_NAMES):
             continue
-        if repeat not in {1, 2, 3} or metadata.get("status") != "completed":
+        if repeat not in requested_repeats or metadata.get("status") != "completed":
             continue
         candidates.setdefault((scenario, repeat), []).append(session_dir)
 
     selected = []
     for scenario in CLASS_NAMES:
-        for repeat in (1, 2, 3):
+        for repeat in requested_repeats:
             matches = candidates.get((scenario, repeat), [])
             if len(matches) != 1:
                 raise ValueError(

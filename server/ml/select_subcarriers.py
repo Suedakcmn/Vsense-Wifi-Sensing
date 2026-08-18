@@ -69,7 +69,7 @@ def main():
     labels = []
     sessions = []
     expected_subcarriers = None
-    for session_dir in discover_main_sessions(args.dataset_dir):
+    for session_dir in discover_main_sessions(args.dataset_dir, tuple(train_repeats)):
         repeat = session_repeat(session_dir)
         if repeat not in train_repeats:
             continue

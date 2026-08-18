@@ -105,7 +105,7 @@ def main():
     subcarrier_indices = load_subcarrier_indices(args.subcarriers)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     sessions = []
-    for session_dir in discover_main_sessions(args.dataset_dir):
+    for session_dir in discover_main_sessions(args.dataset_dir, tuple(repeats)):
         repeat = session_repeat(session_dir)
         if repeat not in repeats:
             continue
