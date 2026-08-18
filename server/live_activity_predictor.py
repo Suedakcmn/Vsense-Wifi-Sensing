@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from io import TextIOBase
 from pathlib import Path
 
+import numpy as np
+
 from csi_utils import csi_to_amplitude, compute_motion_score
 from ml.windows import CSIWindow
 from models import load_activity_artifact
@@ -167,6 +169,7 @@ class LiveActivityPredictor:
         self.model_metadata = loaded.metadata
         self.model_version = loaded.metadata.model_version
         self.model_config = loaded.config
+        self.motion_subcarriers = list(self.model_config["selected_subcarriers"])
         self.window_buffer = LiveCSIWindowBuffer(
             LiveWindowConfig.from_model_config(self.model_config)
         )
@@ -210,7 +213,9 @@ class LiveActivityPredictor:
                 records.append(status)
             motion_scores = {}
             for node_id, rows in window.rows_by_node.items():
-                amplitude_matrix = [csi_to_amplitude(value["csi"]) for value in rows]
+                amplitude_matrix = np.stack(
+                    [csi_to_amplitude(value["csi"]) for value in rows]
+                )[:, self.motion_subcarriers]
                 scores = compute_motion_score(amplitude_matrix)
                 motion_scores[node_id] = round(float(scores.iloc[-1]), 6)
             records.append({

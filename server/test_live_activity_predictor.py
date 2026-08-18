@@ -108,6 +108,25 @@ class LiveCSIWindowBufferTest(unittest.TestCase):
 
 
 class LiveActivityPredictorTest(unittest.TestCase):
+    def test_motion_score_uses_artifact_selected_subcarriers(self):
+        with TemporaryDirectory() as temporary_directory:
+            artifact_dir = Path(temporary_directory)
+            write_window_artifact(artifact_dir)
+            predictor = LiveActivityPredictor(artifact_dir)
+            with patch.object(
+                live_activity_predictor,
+                "compute_motion_score",
+                wraps=live_activity_predictor.compute_motion_score,
+            ) as motion_score:
+                for timestamp in range(0, 2_000_001, 100_000):
+                    predictor.process(csi_row(timestamp, "rx_01"))
+                    predictor.process(csi_row(timestamp, "rx_02"))
+
+            self.assertEqual(motion_score.call_count, 2)
+            for call in motion_score.call_args_list:
+                amplitude_matrix = call.args[0]
+                self.assertEqual(amplitude_matrix.shape, (20, 2))
+
     def test_emits_json_compatible_prediction_for_clean_window(self):
         with TemporaryDirectory() as temporary_directory:
             artifact_dir = Path(temporary_directory)
