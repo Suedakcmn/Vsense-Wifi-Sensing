@@ -74,7 +74,8 @@ model-accuracy conclusion. This test measures transport and service continuity.
 
 - Run the Week 7 DoD test for one uninterrupted hour with at least two physical
   receiver nodes.
-- Include live zone predictions when the zone module is ready.
+- Zone prediction was listed as a possible follow-up at the time of this run;
+  it was later removed from the final project scope.
 - Include live LD2450 ground truth in the hardware run.
 - Record process memory and CPU usage during the one-hour run.
 - Verify physical node disconnect and reconnect behavior, not only replay

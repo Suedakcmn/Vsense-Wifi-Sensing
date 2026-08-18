@@ -9,6 +9,9 @@ import sys
 import time
 from pathlib import Path
 
+from activity_model import ModelContractError
+from validate_model_artifact import validate_artifact
+
 
 def build_commands(args, python_executable: str) -> list[list[str]]:
     collector = [
@@ -59,12 +62,15 @@ def build_commands(args, python_executable: str) -> list[list[str]]:
 
 
 def validate_paths(args):
-    if not (args.artifact_dir / "model.joblib").is_file():
-        raise SystemExit(f"model artifact not found: {args.artifact_dir / 'model.joblib'}")
-    if not (args.artifact_dir / "feature_config.json").is_file():
-        raise SystemExit(
-            f"model config not found: {args.artifact_dir / 'feature_config.json'}"
+    try:
+        validation = validate_artifact(
+            args.artifact_dir,
+            require_final_classes=not args.allow_legacy_artifact,
         )
+    except (ModelContractError, OSError, ValueError) as exc:
+        raise SystemExit(f"invalid model artifact: {exc}") from exc
+    for warning in validation["warnings"]:
+        print(f"Model artifact warning: {warning}", file=sys.stderr)
     if not (args.static_dir / "index.html").is_file():
         raise SystemExit(
             f"dashboard build not found: {args.static_dir / 'index.html'}; "
@@ -137,6 +143,11 @@ def parse_args():
         default=Path("dataset-v1/models/baseline_v1"),
     )
     parser.add_argument("--model-version")
+    parser.add_argument(
+        "--allow-legacy-artifact",
+        action="store_true",
+        help="allow the five-class integration baseline; never use for final evaluation",
+    )
     parser.add_argument("--inactivity-seconds", type=float, default=300.0)
     parser.add_argument("--web-host", default="127.0.0.1")
     parser.add_argument("--web-port", type=int, default=8000)

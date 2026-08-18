@@ -6,6 +6,7 @@ import {
   motionSeries,
   normalizeSnapshot,
   percentage,
+  pipelineMessage,
   radarComparison,
   websocketUrl,
 } from "./dashboardState.js";
@@ -13,7 +14,6 @@ import {
 const ACTIVITY_LABELS = {
   empty_room: "Empty room",
   walking: "Walking",
-  sitting: "Sitting",
   standing: "Standing",
   desk_work: "Desk work",
 };
@@ -72,7 +72,7 @@ function NodeCard({ node }) {
       </div>
       <dl>
         <div><dt>CSI rate</dt><dd>{pps ?? "—"} pps</dd></div>
-        <div><dt>RSSI</dt><dd>{node.health?.rssi ?? "—"} dBm</dd></div>
+        <div><dt>RSSI</dt><dd>{node.health?.last_rssi ?? node.health?.rssi ?? "—"} dBm</dd></div>
         <div><dt>Source</dt><dd>{node.status_source ?? "—"}</dd></div>
       </dl>
     </article>
@@ -143,13 +143,30 @@ function RadarReference({ prediction, groundTruth }) {
   );
 }
 
+function ModelCard({ model, prediction }) {
+  const value = model ?? (prediction ? {
+    model_version: prediction.model_version,
+    status: "ready",
+  } : null);
+  return (
+    <section className="panel model-strip">
+      <div><span>Model</span><strong>{value?.model_version ?? "Waiting"}</strong></div>
+      <div><span>Type</span><strong>{value?.model_type ?? "—"}</strong></div>
+      <div><span>Window</span><strong>{value?.window_seconds ? `${value.window_seconds} s` : "—"}</strong></div>
+      <div><span>Normalization</span><strong>{value?.normalization ?? "—"}</strong></div>
+      <div><span>Status</span><strong className={value?.status === "ready" ? "agree" : ""}>{value?.status ?? "waiting"}</strong></div>
+    </section>
+  );
+}
+
 export default function App() {
   const { state, connection } = useDashboardSocket();
   const prediction = state.latest_prediction;
   const probabilities = prediction?.probabilities ?? {};
   const nodes = useMemo(() => Object.values(state.nodes), [state.nodes]);
   const events = [...state.events].reverse().slice(0, 12);
-  const zone = state.latest_zone?.zone ?? prediction?.zone ?? "unknown";
+  const predictorStatus = state.pipeline_status.activity_predictor;
+  const statusMessage = pipelineMessage(predictorStatus);
 
   return (
     <main className="app-shell">
@@ -169,13 +186,24 @@ export default function App() {
         <section className="alarm-banner" aria-live="assertive">
           <div>
             <p className="eyebrow">Inactivity alert</p>
-            <strong>{state.active_alarm.zone ?? "Unknown zone"}</strong>
+            <strong>{ACTIVITY_LABELS[state.active_alarm.activity] ?? state.active_alarm.activity}</strong>
           </div>
           <span>{Math.round(state.active_alarm.inactive_seconds)} seconds inactive</span>
         </section>
       )}
 
-      <section className="overview-grid">
+      {statusMessage && (
+        <section className="pipeline-banner" role="status">
+          <strong>{statusMessage}</strong>
+          {predictorStatus?.details?.missing_nodes?.length > 0 && (
+            <span>Missing: {predictorStatus.details.missing_nodes.join(", ")}</span>
+          )}
+        </section>
+      )}
+
+      <ModelCard model={state.model_status} prediction={prediction} />
+
+      <section>
         <article className="activity-card panel">
           <p className="eyebrow">Current activity</p>
           <div className="activity-value">
@@ -195,16 +223,6 @@ export default function App() {
           </div>
         </article>
 
-        <article className="zone-card panel">
-          <p className="eyebrow">Estimated zone</p>
-          <div className="zone-map">
-            <div className="zone-marker" />
-            <span>{zone}</span>
-          </div>
-          <p className="muted">
-            Coarse zone output will appear here when the signal comparison module is connected.
-          </p>
-        </article>
       </section>
 
       <MotionChart points={state.motion_scores} />

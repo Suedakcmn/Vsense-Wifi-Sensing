@@ -138,7 +138,11 @@ class ActivityModel:
 
     def predict_window(self, window: CSIWindow) -> ActivityPrediction:
         generated_columns = tuple(
-            feature_names(self.required_nodes, self.selected_subcarriers)
+            feature_names(
+                self.required_nodes,
+                self.selected_subcarriers,
+                spectral_features=bool(self.config.get("spectral_features", False)),
+            )
         )
         if generated_columns != self.feature_columns:
             raise ModelContractError(
@@ -157,6 +161,9 @@ class ActivityModel:
             window,
             self.selected_subcarriers,
             self.required_nodes,
+            normalization=str(self.config.get("normalization", "none")),
+            spectral_features=bool(self.config.get("spectral_features", False)),
+            sample_rate_hz=float(self.config.get("sample_rate_hz") or 40.0),
         )
         return self.predict(features)
 

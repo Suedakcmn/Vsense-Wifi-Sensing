@@ -24,6 +24,7 @@ def arguments(root: Path):
         offline_timeout=5.0,
         artifact_dir=root / "model",
         model_version="test_v1",
+        allow_legacy_artifact=False,
         inactivity_seconds=30.0,
         web_host="127.0.0.1",
         web_port=8000,
@@ -61,15 +62,37 @@ class RunDashboardTest(unittest.TestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             args = arguments(root)
-            args.artifact_dir.mkdir()
             args.static_dir.mkdir()
-            (args.artifact_dir / "model.joblib").touch()
-            (args.artifact_dir / "feature_config.json").write_text("{}")
             (args.static_dir / "index.html").write_text("dashboard")
-            validate_paths(args)
-            (args.static_dir / "index.html").unlink()
-            with self.assertRaisesRegex(SystemExit, "dashboard build not found"):
+            with (
+                patch("run_dashboard.validate_artifact") as validate_artifact,
+            ):
                 validate_paths(args)
+                validate_artifact.assert_called_once_with(
+                    args.artifact_dir,
+                    require_final_classes=True,
+                )
+            (args.static_dir / "index.html").unlink()
+            with (
+                patch("run_dashboard.validate_artifact"),
+                self.assertRaisesRegex(SystemExit, "dashboard build not found"),
+            ):
+                validate_paths(args)
+
+    def test_legacy_artifact_requires_explicit_opt_in(self):
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            args = arguments(root)
+            args.allow_legacy_artifact = True
+            args.static_dir.mkdir()
+            (args.static_dir / "index.html").write_text("dashboard")
+            with patch("run_dashboard.validate_artifact") as validate_artifact:
+                validate_artifact.return_value = {"warnings": ["legacy artifact"]}
+                validate_paths(args)
+            validate_artifact.assert_called_once_with(
+                args.artifact_dir,
+                require_final_classes=False,
+            )
 
     def test_monitor_reports_failed_stage(self):
         first = Mock()

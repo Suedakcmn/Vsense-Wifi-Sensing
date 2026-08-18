@@ -45,6 +45,31 @@ class MLPipelineTest(unittest.TestCase):
         self.assertEqual(len(vector), len(feature_names(("rx_01", "rx_02"), indices)))
         self.assertTrue(np.isfinite(vector).all())
 
+    def test_zscore_spectral_features_have_stable_finite_shape(self):
+        rows = [
+            csi_row(index * 25_000, "rx_01", value=3 + (index % 4))
+            for index in range(80)
+        ]
+        window = CSIWindow("s", "walking", "person", 0, 2_000_000, {
+            "rx_01": rows,
+            "rx_02": [dict(row, node_id="rx_02") for row in rows],
+        })
+        indices = [0, 1, 2]
+        vector = extract_window_features(
+            window,
+            indices,
+            normalization="zscore",
+            spectral_features=True,
+            sample_rate_hz=40,
+        )
+        names = feature_names(
+            ("rx_01", "rx_02"),
+            indices,
+            spectral_features=True,
+        )
+        self.assertEqual(len(vector), len(names))
+        self.assertTrue(np.isfinite(vector).all())
+
     def test_streaming_windows_reject_gap_and_keep_clean_window(self):
         with TemporaryDirectory() as temporary_directory:
             session_dir = Path(temporary_directory)

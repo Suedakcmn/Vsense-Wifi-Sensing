@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCENARIOS = ("empty_room", "walking", "sitting", "standing", "desk_work")
+SCENARIOS = ("empty_room", "walking", "standing", "desk_work")
 DEFAULT_DATASET_ROOT = Path("dataset-v1")
 ACTIVE_FILE_NAME = ".active_session.json"
 

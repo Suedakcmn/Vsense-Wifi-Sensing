@@ -86,6 +86,12 @@ def save_confusion_matrix(y_true, y_pred, title, output_path):
 def main():
     args = parse_args()
     table = pd.read_parquet(args.features)
+    manifest_path = args.features.with_suffix(".manifest.json")
+    feature_manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
     feature_columns = [column for column in table.columns if column not in META_COLUMNS]
     train, validation, test = split_by_repeat(table)
     for name, split in (("train", train), ("validation", validation), ("test", test)):
@@ -167,6 +173,9 @@ def main():
                 "selected_subcarriers": selected_subcarriers,
                 "feature_columns": feature_columns,
                 "class_names": CLASS_NAMES,
+                "normalization": feature_manifest.get("normalization", "none"),
+                "spectral_features": bool(feature_manifest.get("spectral_features", False)),
+                "sample_rate_hz": feature_manifest.get("sample_rate_hz"),
             },
             indent=2,
         ),

@@ -14,12 +14,10 @@ class InactivityAlarmConfig:
     threshold_seconds: float
     moving_activities: frozenset[str] = frozenset({"walking"})
     inactive_activities: frozenset[str] = frozenset({
-        "sitting",
         "standing",
         "desk_work",
     })
     empty_activities: frozenset[str] = frozenset({"empty_room"})
-    default_zone: str = "unknown"
 
     def validate(self):
         if self.threshold_seconds <= 0:
@@ -47,7 +45,6 @@ class InactivityAlarmEngine:
         self.config = config
         self.inactive_since_us: int | None = None
         self.last_timestamp_us: int | None = None
-        self.last_zone = config.default_zone
         self.alarm_active = False
 
     def process(self, prediction: dict) -> list[dict]:
@@ -60,10 +57,6 @@ class InactivityAlarmEngine:
         if self.last_timestamp_us is not None and timestamp_us <= self.last_timestamp_us:
             return []
         self.last_timestamp_us = timestamp_us
-        zone = prediction.get("zone")
-        if isinstance(zone, str) and zone:
-            self.last_zone = zone
-
         if activity in self.config.empty_activities:
             return self._reset(timestamp_us, activity, reason="room_empty")
         if activity in self.config.moving_activities:
@@ -120,7 +113,6 @@ class InactivityAlarmEngine:
             "message_type": "inactivity_alarm",
             "status": status,
             "timestamp_us": timestamp_us,
-            "zone": self.last_zone,
             "activity": activity,
             "inactive_seconds": round(inactive_seconds, 3),
             "threshold_seconds": self.config.threshold_seconds,
