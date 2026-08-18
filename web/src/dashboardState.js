@@ -1,12 +1,14 @@
-export const EMPTY_STATE = Object.freeze({
-  revision: 0,
-  latest_prediction: null,
-  active_alarm: null,
-  latest_zone: null,
-  motion_scores: [],
-  nodes: {},
-  events: [],
-});
+export function createEmptyState() {
+  return {
+    revision: 0,
+    latest_prediction: null,
+    active_alarm: null,
+    latest_zone: null,
+    motion_scores: [],
+    nodes: {},
+    events: [],
+  };
+}
 
 export function normalizeSnapshot(value) {
   if (!value || value.message_type !== "dashboard_state") {
