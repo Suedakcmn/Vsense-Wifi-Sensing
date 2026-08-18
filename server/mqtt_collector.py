@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -218,6 +219,10 @@ def parse_args():
     parser.add_argument("--port", type=int, default=1883)
     parser.add_argument("--username")
     parser.add_argument("--password")
+    parser.add_argument(
+        "--password-env",
+        help="Read the MQTT password from this environment variable",
+    )
     parser.add_argument("--client-id", default="vsense-collector")
     parser.add_argument("--csi-topic", default="vsense/+/csi")
     parser.add_argument("--health-topic", default="vsense/+/health")
@@ -258,8 +263,17 @@ def main():
         client_id=args.client_id,
         userdata=collector,
     )
+    if args.password and args.password_env:
+        raise SystemExit("use only one of --password or --password-env")
+    password = args.password
+    if args.password_env:
+        password = os.environ.get(args.password_env)
+        if password is None:
+            raise SystemExit(
+                f"MQTT password environment variable is not set: {args.password_env}"
+            )
     if args.username:
-        client.username_pw_set(args.username, args.password)
+        client.username_pw_set(args.username, password)
     client.on_connect = collector.on_connect
     client.on_message = collector.on_message
     watchdog = threading.Thread(target=collector.watchdog, daemon=True)
