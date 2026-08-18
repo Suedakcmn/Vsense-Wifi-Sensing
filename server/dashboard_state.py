@@ -24,8 +24,9 @@ class DashboardState:
         self.config = config
         self.latest_prediction: dict | None = None
         self.active_alarm: dict | None = None
-        self.latest_zone: dict | None = None
         self.latest_ground_truth: dict | None = None
+        self.model_status: dict | None = None
+        self.pipeline_status: dict[str, dict] = {}
         self.motion_scores: deque[dict] = deque(maxlen=config.max_events)
         self.nodes: dict[str, dict] = {}
         self.events: deque[dict] = deque(maxlen=config.max_events)
@@ -45,12 +46,14 @@ class DashboardState:
             changed = self._apply_node_status(record)
         elif message_type == "health":
             changed = self._apply_health(record)
-        elif message_type == "zone_prediction":
-            changed = self._apply_zone(record)
         elif message_type == "motion_score":
             changed = self._apply_motion_score(record)
         elif message_type == "ground_truth":
             changed = self._apply_ground_truth(record)
+        elif message_type == "model_status":
+            changed = self._apply_model_status(record)
+        elif message_type == "pipeline_status":
+            changed = self._apply_pipeline_status(record)
 
         if changed:
             self.revision += 1
@@ -102,15 +105,6 @@ class DashboardState:
         node["health"] = deepcopy(record)
         return True
 
-    def _apply_zone(self, record: dict) -> bool:
-        zone = record.get("zone")
-        timestamp = record.get("timestamp_us")
-        if not isinstance(zone, str) or not zone or not isinstance(timestamp, int):
-            return False
-        self.latest_zone = deepcopy(record)
-        self.events.append(deepcopy(record))
-        return True
-
     def _apply_motion_score(self, record: dict) -> bool:
         timestamp = record.get("window_end_us")
         scores = record.get("scores")
@@ -143,6 +137,22 @@ class DashboardState:
         self.latest_ground_truth = deepcopy(record)
         return True
 
+    def _apply_model_status(self, record: dict) -> bool:
+        model_version = record.get("model_version")
+        status = record.get("status")
+        if not isinstance(model_version, str) or not model_version or not isinstance(status, str):
+            return False
+        self.model_status = deepcopy(record)
+        return True
+
+    def _apply_pipeline_status(self, record: dict) -> bool:
+        component = record.get("component")
+        status = record.get("status")
+        if not isinstance(component, str) or not component or not isinstance(status, str):
+            return False
+        self.pipeline_status[component] = deepcopy(record)
+        return True
+
     def snapshot(self) -> dict:
         return {
             "schema_version": 1,
@@ -150,8 +160,9 @@ class DashboardState:
             "revision": self.revision,
             "latest_prediction": deepcopy(self.latest_prediction),
             "active_alarm": deepcopy(self.active_alarm),
-            "latest_zone": deepcopy(self.latest_zone),
             "latest_ground_truth": deepcopy(self.latest_ground_truth),
+            "model_status": deepcopy(self.model_status),
+            "pipeline_status": deepcopy(self.pipeline_status),
             "motion_scores": [deepcopy(value) for value in self.motion_scores],
             "nodes": {
                 node_id: deepcopy(value)

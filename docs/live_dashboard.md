@@ -20,12 +20,14 @@ mosquitto -v
 
 ## Start the complete pipeline
 
-The launcher connects the four existing stages and serves the built dashboard:
+The launcher connects the collector, model, alarm, and web stages and
+serves the built dashboard:
 
 ```bash
 python server/run_dashboard.py \
   --mqtt-host 127.0.0.1 \
   --artifact-dir dataset-v1/models/baseline_v1 \
+  --allow-legacy-artifact \
   --inactivity-seconds 300
 ```
 
@@ -43,6 +45,21 @@ python server/run_dashboard.py \
 
 The launcher reads the variable named by `--mqtt-password-env` and never
 requires a password command-line argument.
+
+The model strip reports the loaded artifact contract. Pipeline warnings explain
+missing receivers or a window that is still filling.
+
+Validate or package a final model before launching it:
+
+```bash
+python server/validate_model_artifact.py dataset-v1/models/final_v1
+
+python server/package_model.py \
+  --model /path/to/model.joblib \
+  --config /path/to/feature_config.json \
+  --metrics /path/to/metrics.json \
+  --output dataset-v1/models/final_v1
+```
 
 ## Hardware-free demo
 
@@ -74,6 +91,22 @@ python server/run_dashboard.py --inactivity-seconds 10
 Production or evaluation runs must use the agreed real threshold rather than
 the shortened demo value.
 
+With the 10-second demo threshold, replay the recorded inactive session:
+
+```bash
+python server/csi_replay.py \
+  /path/to/20260811_132130_lab_sitting_r02/csi.jsonl \
+  --transport mqtt \
+  --mqtt-host 127.0.0.1 \
+  --limit 5000 \
+  --delay 0.002
+```
+
+The legacy baseline predicts this retired sitting recording as `standing`,
+which is an inactive final class, so the dashboard raises the alarm after 10
+seconds of recording time. This verifies the alarm path but does not make the
+recording part of the final four-class evaluation.
+
 ## Hardware-free LD2450 comparison
 
 While the launcher is running, publish simulated radar reference frames from a
@@ -89,7 +122,7 @@ python server/ld2450_simulator.py \
 
 The LD2450 panel shows occupancy, target count, target coordinates, speed, and
 CSI/radar occupancy agreement. This agreement means only empty versus occupied;
-the radar does not provide walking, sitting, standing, or desk-work labels, so
+the radar does not provide walking, standing, or desk-work labels, so
 the panel must not present it as activity-class accuracy.
 
 ## Verification

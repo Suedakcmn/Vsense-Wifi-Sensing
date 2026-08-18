@@ -55,11 +55,11 @@ class DashboardAPITest(unittest.TestCase):
             asyncio.run(self.hub.ingest({
                 "message_type": "activity_prediction",
                 "window_end_us": 20,
-                "activity": "sitting",
+                "activity": "standing",
             }))
             updated = websocket.receive_json()
             self.assertEqual(updated["revision"], 1)
-            self.assertEqual(updated["latest_prediction"]["activity"], "sitting")
+            self.assertEqual(updated["latest_prediction"]["activity"], "standing")
 
     def test_jsonl_reader_ingests_valid_records_and_reports_bad_lines(self):
         input_stream = io.StringIO("".join([

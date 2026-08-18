@@ -7,6 +7,7 @@ import {
   motionSeries,
   normalizeSnapshot,
   percentage,
+  pipelineMessage,
   radarComparison,
   websocketUrl,
 } from "./dashboardState.js";
@@ -57,10 +58,18 @@ test("formats confidence safely", () => {
   assert.equal(percentage(undefined), "—");
 });
 
+test("explains actionable pipeline states", () => {
+  assert.match(
+    pipelineMessage({ status: "waiting", reason: "missing_rx" }),
+    /required receiver/,
+  );
+  assert.equal(pipelineMessage({ status: "ready" }), null);
+});
+
 test("formats known event types", () => {
   assert.equal(
-    eventLabel({ message_type: "inactivity_alarm", status: "raised", zone: "office" }),
-    "Alarm raised: office",
+    eventLabel({ message_type: "inactivity_alarm", status: "raised" }),
+    "Inactivity alarm: raised",
   );
   assert.equal(
     eventLabel({ message_type: "node_status", node_id: "rx_01", status: "online" }),

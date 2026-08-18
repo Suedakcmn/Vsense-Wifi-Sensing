@@ -10,16 +10,17 @@ from dataclasses import dataclass
 from io import TextIOBase
 from pathlib import Path
 
-from activity_model import ActivityModel
 from csi_utils import csi_to_amplitude, compute_motion_score
 from ml.windows import CSIWindow
+from models import load_activity_artifact
 
 
 PASSTHROUGH_MESSAGE_TYPES = frozenset({
     "ground_truth",
     "health",
     "node_status",
-    "zone_prediction",
+    "model_status",
+    "pipeline_status",
 })
 
 
@@ -161,15 +162,52 @@ class LiveActivityPredictor:
         *,
         model_version: str | None = None,
     ):
-        self.model = ActivityModel(artifact_dir)
-        self.model_version = model_version or Path(artifact_dir).name
+        loaded = load_activity_artifact(artifact_dir, model_version=model_version)
+        self.model = loaded.model
+        self.model_metadata = loaded.metadata
+        self.model_version = loaded.metadata.model_version
+        self.model_config = loaded.config
         self.window_buffer = LiveCSIWindowBuffer(
-            LiveWindowConfig.from_model_config(self.model.config)
+            LiveWindowConfig.from_model_config(self.model_config)
         )
+        self._last_pipeline_state: tuple[str, str | None] | None = None
+        self._has_emitted_window = False
+
+    def startup_records(self) -> list[dict]:
+        return [
+            self.model_metadata.as_status(),
+            self._pipeline_status("waiting", "waiting_for_csi"),
+        ]
 
     def process(self, row: dict) -> list[dict]:
         records = []
-        for window in self.window_buffer.add(row):
+        windows = self.window_buffer.add(row)
+        if (
+            row.get("message_type") == "node_status"
+            and row.get("node_id") in self.window_buffer.config.required_nodes
+            and row.get("status") == "offline"
+        ):
+            status = self._changed_pipeline_status("waiting", "missing_rx")
+            if status:
+                records.append(status)
+        elif (
+            row.get("message_type") == "csi"
+            and not windows
+            and not self._has_emitted_window
+        ):
+            missing = sorted(
+                set(self.window_buffer.config.required_nodes)
+                - set(self.window_buffer.latest_timestamp_by_node)
+            )
+            reason = "missing_rx" if missing else "waiting_for_window"
+            status = self._changed_pipeline_status("waiting", reason, missing_nodes=missing)
+            if status:
+                records.append(status)
+        for window in windows:
+            self._has_emitted_window = True
+            status = self._changed_pipeline_status("ready", None)
+            if status:
+                records.append(status)
             motion_scores = {}
             for node_id, rows in window.rows_by_node.items():
                 amplitude_matrix = [csi_to_amplitude(value["csi"]) for value in rows]
@@ -195,6 +233,30 @@ class LiveActivityPredictor:
             })
         return records
 
+    def _pipeline_status(self, status: str, reason: str | None, **details) -> dict:
+        record = {
+            "schema_version": 1,
+            "message_type": "pipeline_status",
+            "component": "activity_predictor",
+            "status": status,
+            "reason": reason,
+        }
+        if details:
+            record["details"] = details
+        return record
+
+    def _changed_pipeline_status(
+        self,
+        status: str,
+        reason: str | None,
+        **details,
+    ) -> dict | None:
+        state = (status, reason)
+        if state == self._last_pipeline_state:
+            return None
+        self._last_pipeline_state = state
+        return self._pipeline_status(status, reason, **details)
+
 
 def run_stream(
     predictor: LiveActivityPredictor,
@@ -203,6 +265,12 @@ def run_stream(
     error_stream: TextIOBase,
 ) -> int:
     invalid_lines = 0
+    for record in predictor.startup_records():
+        print(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")),
+            file=output_stream,
+            flush=True,
+        )
     for line_number, line in enumerate(input_stream, start=1):
         if not line.strip():
             continue
