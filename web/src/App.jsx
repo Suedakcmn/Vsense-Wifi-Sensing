@@ -6,6 +6,7 @@ import {
   motionSeries,
   normalizeSnapshot,
   percentage,
+  radarComparison,
   websocketUrl,
 } from "./dashboardState.js";
 
@@ -110,6 +111,38 @@ function MotionChart({ points }) {
   );
 }
 
+function RadarReference({ prediction, groundTruth }) {
+  const radar = radarComparison(prediction, groundTruth);
+  return (
+    <section className="panel section-block radar-panel">
+      <div className="section-heading">
+        <div><p className="eyebrow">mmWave reference</p><h2>LD2450 comparison</h2></div>
+        <span>{groundTruth?.node_id ?? "Waiting for radar"}</span>
+      </div>
+      {!radar.available ? <p className="empty-message">Waiting for LD2450 ground-truth frames...</p> : (
+        <>
+          <div className="radar-summary">
+            <div><span>Radar occupancy</span><strong>{radar.occupied ? "Occupied" : "Empty"}</strong></div>
+            <div><span>Detected targets</span><strong>{radar.targets.length}</strong></div>
+            <div><span>CSI/radar occupancy</span><strong className={radar.agreement === false ? "disagree" : "agree"}>{radar.agreement === null ? "Waiting for CSI" : radar.agreement ? "Agreement" : "Mismatch"}</strong></div>
+          </div>
+          {radar.targets.length > 0 && (
+            <div className="radar-targets">
+              {radar.targets.map((target) => (
+                <div key={target.target_id}>
+                  <strong>Target {target.target_id}</strong>
+                  <span>X {target.x_mm} mm</span><span>Y {target.y_mm} mm</span><span>{target.speed_cm_s} cm/s</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="muted motion-note">Agreement compares occupied versus empty only; LD2450 does not provide activity-class labels.</p>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const { state, connection } = useDashboardSocket();
   const prediction = state.latest_prediction;
@@ -175,6 +208,7 @@ export default function App() {
       </section>
 
       <MotionChart points={state.motion_scores} />
+      <RadarReference prediction={prediction} groundTruth={state.latest_ground_truth} />
 
       <section className="panel section-block">
         <div className="section-heading">

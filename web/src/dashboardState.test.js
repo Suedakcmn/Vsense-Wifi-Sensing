@@ -6,6 +6,7 @@ import {
   motionSeries,
   normalizeSnapshot,
   percentage,
+  radarComparison,
   websocketUrl,
 } from "./dashboardState.js";
 
@@ -64,4 +65,13 @@ test("builds finite chart paths for receiver motion scores", () => {
   assert.equal(series[0].latest, 1);
   assert.match(series[0].path, /^0,32 100,/);
   assert.equal(motionSeries([]).length, 0);
+});
+
+test("compares CSI and radar occupancy without claiming activity accuracy", () => {
+  assert.deepEqual(
+    radarComparison({ activity: "walking" }, { targets: [{ target_id: 1 }] }),
+    { available: true, occupied: true, agreement: true, targets: [{ target_id: 1 }] },
+  );
+  assert.equal(radarComparison({ activity: "empty_room" }, { targets: [{}] }).agreement, false);
+  assert.equal(radarComparison(null, null).available, false);
 });

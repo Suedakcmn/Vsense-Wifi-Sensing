@@ -204,7 +204,7 @@ class LiveActivityPredictorTest(unittest.TestCase):
             forwarded = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(
                 [record["message_type"] for record in forwarded],
-                ["node_status", "health", "zone_prediction"],
+                ["node_status", "health", "zone_prediction", "ground_truth"],
             )
 
     def test_main_stops_cleanly_on_keyboard_interrupt(self):
