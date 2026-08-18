@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  EMPTY_STATE,
+  createEmptyState,
   eventLabel,
   motionSeries,
   normalizeSnapshot,
@@ -19,7 +19,7 @@ const ACTIVITY_LABELS = {
 };
 
 function useDashboardSocket() {
-  const [state, setState] = useState(EMPTY_STATE);
+  const [state, setState] = useState(createEmptyState);
   const [connection, setConnection] = useState("connecting");
 
   useEffect(() => {

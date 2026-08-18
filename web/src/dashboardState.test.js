@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createEmptyState,
   eventLabel,
   motionSeries,
   normalizeSnapshot,
@@ -9,6 +10,17 @@ import {
   radarComparison,
   websocketUrl,
 } from "./dashboardState.js";
+
+test("creates isolated initial dashboard state", () => {
+  const first = createEmptyState();
+  const second = createEmptyState();
+  first.nodes.rx_01 = { status: "online" };
+  first.events.push({ message_type: "node_status" });
+  first.motion_scores.push({ scores: { rx_01: 1 } });
+  assert.deepEqual(second.nodes, {});
+  assert.deepEqual(second.events, []);
+  assert.deepEqual(second.motion_scores, []);
+});
 
 test("normalizes a dashboard snapshot", () => {
   const snapshot = normalizeSnapshot({
