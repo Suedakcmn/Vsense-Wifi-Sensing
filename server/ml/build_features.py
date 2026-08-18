@@ -14,6 +14,7 @@ from ml.features import (
     feature_names,
     load_subcarrier_indices,
 )
+from ml.constants import MODEL_SCHEMA_VERSION
 from ml.windows import WindowConfig, discover_main_sessions, iter_session_windows
 
 
@@ -89,7 +90,7 @@ def main():
     table = pd.DataFrame.from_records(records)
     table.to_parquet(args.output, index=False)
     manifest = {
-        "schema_version": 1,
+        "schema_version": MODEL_SCHEMA_VERSION,
         "feature_table": args.output.name,
         "feature_extractor": "ml.features.extract_window_features",
         "signal_normalization": args.normalization,

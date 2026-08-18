@@ -8,10 +8,17 @@ import torch
 from torch.utils.data import DataLoader
 
 from ml.cnn_data import CNNTensorConfig, CSITensorIterableDataset, window_to_tensor
+from ml.cnn_model import CNNModelConfig, SmallCSIConvNet
 from ml.features import extract_window_features, feature_names, normalize_amplitude
 from ml.windows import CSIWindow, WindowConfig, iter_session_windows
 from ml.train_baselines import repeat_from_session_id, split_by_repeat
 from ml.run_experiments import development_folds, validate_table
+from ml.subcarriers import (
+    combine_receiver_scores,
+    get_ignore_indices,
+    multiclass_fisher_scores,
+    select_ranked_subcarriers,
+)
 import pandas as pd
 
 
@@ -27,6 +34,69 @@ def csi_row(timestamp, node_id, value=3):
 
 
 class MLPipelineTest(unittest.TestCase):
+    def test_subcarrier_ignore_indices_repeat_for_128_bins(self):
+        ignored_64 = get_ignore_indices(64)
+        self.assertEqual(
+            ignored_64,
+            {0, 1, 2, 3, 6, 20, 27, 28, 34, 48, 60, 61, 62, 63},
+        )
+        ignored_128 = get_ignore_indices(128)
+        self.assertEqual(ignored_128, ignored_64 | {index + 64 for index in ignored_64})
+
+    def test_subcarrier_selection_ignores_bins_and_returns_frequency_order(self):
+        scores = np.asarray([0.1, 9.0, 0.8, 0.7, 0.2])
+        ranked, ordered = select_ranked_subcarriers(scores, 2, {1})
+        self.assertEqual(ranked, [2, 3])
+        self.assertEqual(ordered, [2, 3])
+
+    def test_multiclass_fisher_and_receiver_combination(self):
+        features = np.asarray(
+            [[0.0, 1.0], [0.1, 1.1], [5.0, 1.0], [5.1, 1.1]],
+            dtype=np.float32,
+        )
+        labels = np.asarray(["a", "a", "b", "b"])
+        scores = multiclass_fisher_scores(features, labels)
+        self.assertGreater(scores[0], scores[1])
+        combined = combine_receiver_scores({"rx_01": scores, "rx_02": scores * 2})
+        self.assertEqual(int(np.argmax(combined)), 0)
+
+    def test_cnn_forward_produces_four_finite_logits(self):
+        model = SmallCSIConvNet()
+        inputs = torch.randn(4, 2, 80, 20)
+        logits = model(inputs)
+        self.assertEqual(tuple(logits.shape), (4, 4))
+        self.assertTrue(torch.isfinite(logits).all())
+
+    def test_cnn_rejects_wrong_receiver_or_subcarrier_shape(self):
+        model = SmallCSIConvNet()
+        with self.assertRaises(ValueError):
+            model(torch.randn(4, 1, 80, 20))
+        with self.assertRaises(ValueError):
+            model(torch.randn(4, 2, 80, 19))
+
+    def test_cnn_backward_has_finite_gradients_and_updates_weights(self):
+        torch.manual_seed(42)
+        model = SmallCSIConvNet(CNNModelConfig(dropout=0.0))
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        criterion = torch.nn.CrossEntropyLoss()
+        inputs = torch.randn(8, 2, 80, 20)
+        targets = torch.tensor([0, 1, 2, 3, 0, 1, 2, 3])
+        before = model.classifier[-1].weight.detach().clone()
+        optimizer.zero_grad(set_to_none=True)
+        loss = criterion(model(inputs), targets)
+        self.assertTrue(torch.isfinite(loss))
+        loss.backward()
+        gradients = [
+            parameter.grad
+            for parameter in model.parameters()
+            if parameter.grad is not None
+        ]
+        self.assertTrue(gradients)
+        self.assertTrue(all(torch.isfinite(gradient).all() for gradient in gradients))
+        optimizer.step()
+        after = model.classifier[-1].weight.detach()
+        self.assertFalse(torch.equal(before, after))
+
     def test_cnn_window_tensor_has_fixed_shape_and_normalization(self):
         timestamps = [0, 17_000, 51_000, 88_000, 131_000, 177_000]
         rows = [
@@ -117,7 +187,7 @@ class MLPipelineTest(unittest.TestCase):
     def test_development_cv_keeps_repeat_three_locked(self):
         rows = []
         for repeat in (1, 2, 3):
-            for label in ("empty_room", "walking", "sitting", "standing", "desk_work"):
+            for label in ("empty_room", "walking", "standing", "desk_work"):
                 rows.append(
                     {
                         "session_id": f"{label}_r{repeat:02d}",

@@ -30,3 +30,7 @@ data/**/*.dat
 # Local Week 5 campaign recordings
 dataset-v1/sessions/
 dataset-v1/.active_session.json
+
+# Generated ML caches and experiment artifacts
+dataset-v1/processed/
+dataset-v1/experiments/

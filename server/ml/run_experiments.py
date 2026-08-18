@@ -17,7 +17,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-from ml.constants import CLASS_NAMES, META_COLUMNS
+from ml.constants import CLASS_NAMES, META_COLUMNS, MODEL_SCHEMA_VERSION
 from ml.train_baselines import repeat_from_session_id
 
 
@@ -112,6 +112,11 @@ def validate_table(table: pd.DataFrame) -> None:
             raise ValueError(
                 f"repeat {repeat} is missing classes: {sorted(missing_classes)}"
             )
+
+
+def filter_model_classes(table: pd.DataFrame) -> pd.DataFrame:
+    """Keep only labels in the current model contract."""
+    return table[table["label"].isin(CLASS_NAMES)].copy()
 
 
 def model_parameters(model: Pipeline) -> dict:
@@ -212,7 +217,7 @@ def run_development_cv(table: pd.DataFrame, models: dict[str, Pipeline]):
 
 def main():
     args = parse_args()
-    table = pd.read_parquet(args.features)
+    table = filter_model_classes(pd.read_parquet(args.features))
     validate_table(table)
     manifest_path = args.features.with_suffix(".manifest.json")
     manifest = (
@@ -240,7 +245,7 @@ def main():
             )
     selected_model = max(results, key=lambda name: results[name]["mean_macro_f1"])
     report = {
-        "schema_version": 1,
+        "schema_version": MODEL_SCHEMA_VERSION,
         "experiment_name": args.experiment_name,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "selection_metric": "mean development session-CV macro-F1",
