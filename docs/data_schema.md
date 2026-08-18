@@ -18,7 +18,7 @@ The preferred logical format for replay/live testing is:
 | csi | Raw CSI values in [imag0, real0, imag1, real1, ...] format |
 | label | Optional label for recorded data only |
 | schema_version | `2` for CSI/telemetry; `1` for LD2450 ground truth |
-| message_type | `csi`, `health`, `node_status`, or `ground_truth` |
+| message_type | Transport, inference, status, alarm, or ground-truth record type |
 | recorded_at | Collector receive time in UTC ISO-8601 form |
 | collector_ts_us | Collector receive time as Unix epoch microseconds |
 
@@ -30,6 +30,20 @@ The firmware `ts_us` value is device uptime and is not shared across RX nodes.
 Use `collector_ts_us` to align CSI from multiple RX nodes or LD2450 radar data
 on the collector's common clock; keep `ts_us` for device-side interval and
 jitter analysis.
+
+## Live inference records
+
+The final JSONL pipeline adds schema-version 1 application records without
+modifying raw CSI:
+
+- `model_status`: loaded model version, type, window, normalization, sample
+  rate, and class order;
+- `pipeline_status`: component readiness or an actionable wait/error reason;
+- `motion_score`: one relative score per receiver for a clean CSI window;
+- `activity_prediction`: activity, confidence, class probabilities, model
+  version, and window timestamps;
+- `inactivity_alarm`: `raised` or `cleared` transition with the latest activity
+  and inactivity duration.
 
 ## LD2450 ground truth
 
