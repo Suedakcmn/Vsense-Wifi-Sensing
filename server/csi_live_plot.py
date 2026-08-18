@@ -297,6 +297,7 @@ def main():
 
     node_states = {}
     node_lines = {}
+    pending_node_statuses = {}
 
     print(
         "Reading CSI JSON lines from stdin. Press Ctrl+C to stop.",
@@ -346,6 +347,9 @@ def main():
     def get_node_state(node_id):
         if node_id not in node_states:
             node_states[node_id] = create_node_state(args)
+            node_states[node_id]["connection_status"] = (
+                pending_node_statuses.pop(node_id, "online")
+            )
             node_lines[node_id], = ax.plot([], [], label=node_id)
             ax.legend(
                 loc="upper right",
@@ -363,12 +367,19 @@ def main():
                 break
 
             node_id = item["node_id"]
-            state = get_node_state(node_id)
 
             if item["message_type"] == "node_status":
-                state["connection_status"] = item["status"]
+                if node_id in node_states:
+                    node_states[node_id]["connection_status"] = item[
+                        "status"
+                    ]
+                else:
+                    # Status-only devices (for example LD2450 radar) must
+                    # not create a line on the CSI motion-score graph.
+                    pending_node_statuses[node_id] = item["status"]
                 continue
 
+            state = get_node_state(node_id)
             state["connection_status"] = "online"
             amplitude = item["amplitude"]
 
