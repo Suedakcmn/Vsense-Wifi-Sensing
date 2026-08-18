@@ -121,8 +121,20 @@ class LiveActivityPredictorTest(unittest.TestCase):
                 records.extend(predictor.process(csi_row(timestamp, "rx_01")))
                 records.extend(predictor.process(csi_row(timestamp, "rx_02")))
 
-            self.assertEqual(len(records), 1)
-            record = records[0]
+            emitted = [
+                value for value in records
+                if value["message_type"] in {"motion_score", "activity_prediction"}
+            ]
+            self.assertEqual(len(emitted), 2)
+            motion, record = emitted
+            pipeline_records = [
+                value for value in records
+                if value["message_type"] == "pipeline_status"
+            ]
+            self.assertEqual(pipeline_records[-1]["status"], "ready")
+            self.assertEqual(motion["message_type"], "motion_score")
+            self.assertEqual(set(motion["scores"]), {"rx_01", "rx_02"})
+            self.assertTrue(all(value >= 0 for value in motion["scores"].values()))
             self.assertEqual(record["schema_version"], 1)
             self.assertEqual(record["message_type"], "activity_prediction")
             self.assertEqual(record["model_version"], "test_v1")
@@ -145,10 +157,11 @@ class LiveActivityPredictorTest(unittest.TestCase):
                 [],
             )
             for timestamp in range(0, 2_000_001, 100_000):
-                self.assertEqual(
-                    predictor.process(csi_row(timestamp, "rx_01")),
-                    [],
-                )
+                records = predictor.process(csi_row(timestamp, "rx_01"))
+                self.assertFalse(any(
+                    record["message_type"] in {"motion_score", "activity_prediction"}
+                    for record in records
+                ))
 
     def test_stream_emits_jsonl_and_reports_invalid_input(self):
         with TemporaryDirectory() as temporary_directory:
@@ -171,10 +184,47 @@ class LiveActivityPredictorTest(unittest.TestCase):
 
             records = [json.loads(line) for line in output.getvalue().splitlines()]
             self.assertEqual(invalid_lines, 2)
-            self.assertEqual(len(records), 1)
-            self.assertEqual(records[0]["message_type"], "activity_prediction")
+            prediction_records = [
+                record for record in records
+                if record["message_type"] in {"motion_score", "activity_prediction"}
+            ]
+            self.assertEqual(len(prediction_records), 2)
+            self.assertEqual(
+                [record["message_type"] for record in prediction_records],
+                ["motion_score", "activity_prediction"],
+            )
             self.assertIn("invalid JSON", errors.getvalue())
             self.assertIn("non-object JSON", errors.getvalue())
+
+    def test_stream_forwards_dashboard_telemetry_but_not_raw_csi(self):
+        with TemporaryDirectory() as temporary_directory:
+            artifact_dir = Path(temporary_directory)
+            write_window_artifact(artifact_dir)
+            predictor = LiveActivityPredictor(artifact_dir)
+            records = [
+                {"message_type": "node_status", "node_id": "rx_01", "status": "online"},
+                {"message_type": "health", "node_id": "rx_01", "csi_pps": 80},
+                csi_row(0, "rx_01"),
+                {"message_type": "ground_truth", "node_id": "ld2450_01"},
+            ]
+            output = io.StringIO()
+            run_stream(
+                predictor,
+                io.StringIO("".join(json.dumps(value) + "\n" for value in records)),
+                output,
+                io.StringIO(),
+            )
+            forwarded = [json.loads(line) for line in output.getvalue().splitlines()]
+            passthrough = [
+                record["message_type"] for record in forwarded
+                if record["message_type"] in {
+                    "node_status", "health", "ground_truth"
+                }
+            ]
+            self.assertEqual(
+                passthrough,
+                ["node_status", "health", "ground_truth"],
+            )
 
     def test_main_stops_cleanly_on_keyboard_interrupt(self):
         with (

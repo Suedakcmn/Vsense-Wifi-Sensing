@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import sys
 import time
 
 
@@ -169,6 +170,7 @@ def main():
     frame_count = run(args)
     print(
         f"Simulated {frame_count} LD2450 frames via {args.transport}.",
+        file=sys.stderr if args.transport == "stdout" else sys.stdout,
         flush=True,
     )
 

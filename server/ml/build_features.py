@@ -22,6 +22,13 @@ def parse_args():
     parser.add_argument("--max-gap-ms", type=float, default=500.0)
     parser.add_argument("--min-rows-per-node", type=int, default=20)
     parser.add_argument(
+        "--normalization",
+        choices=("none", "zscore", "robust"),
+        default="none",
+    )
+    parser.add_argument("--spectral-features", action="store_true")
+    parser.add_argument("--sample-rate-hz", type=float, default=40.0)
+    parser.add_argument(
         "--subcarriers",
         type=Path,
         default=Path("server/config/selected_subcarriers.txt"),
@@ -39,13 +46,24 @@ def main():
         min_rows_per_node=args.min_rows_per_node,
     )
     indices = load_subcarrier_indices(args.subcarriers)
-    names = feature_names(config.required_nodes, indices)
+    names = feature_names(
+        config.required_nodes,
+        indices,
+        spectral_features=args.spectral_features,
+    )
     records = []
     summaries = []
     for session_dir in discover_main_sessions(args.dataset_dir):
         accepted = 0
         for window in iter_session_windows(session_dir, config):
-            values = extract_window_features(window, indices, config.required_nodes)
+            values = extract_window_features(
+                window,
+                indices,
+                config.required_nodes,
+                normalization=args.normalization,
+                spectral_features=args.spectral_features,
+                sample_rate_hz=args.sample_rate_hz,
+            )
             record = dict(zip(names, values.tolist()))
             record.update(
                 {
@@ -74,6 +92,9 @@ def main():
         "min_rows_per_node": args.min_rows_per_node,
         "required_nodes": list(config.required_nodes),
         "selected_subcarriers": indices,
+        "normalization": args.normalization,
+        "spectral_features": args.spectral_features,
+        "sample_rate_hz": args.sample_rate_hz,
         "feature_count": len(names),
         "window_count": len(table),
         "sessions": summaries,
@@ -86,4 +107,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
