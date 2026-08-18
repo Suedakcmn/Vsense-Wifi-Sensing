@@ -11,10 +11,16 @@ from io import TextIOBase
 from pathlib import Path
 
 from activity_model import ActivityModel
+from csi_utils import csi_to_amplitude, compute_motion_score
 from ml.windows import CSIWindow
 
 
-PASSTHROUGH_MESSAGE_TYPES = frozenset({"health", "node_status", "zone_prediction"})
+PASSTHROUGH_MESSAGE_TYPES = frozenset({
+    "ground_truth",
+    "health",
+    "node_status",
+    "zone_prediction",
+})
 
 
 @dataclass(frozen=True)
@@ -164,6 +170,18 @@ class LiveActivityPredictor:
     def process(self, row: dict) -> list[dict]:
         records = []
         for window in self.window_buffer.add(row):
+            motion_scores = {}
+            for node_id, rows in window.rows_by_node.items():
+                amplitude_matrix = [csi_to_amplitude(value["csi"]) for value in rows]
+                scores = compute_motion_score(amplitude_matrix)
+                motion_scores[node_id] = round(float(scores.iloc[-1]), 6)
+            records.append({
+                "schema_version": 1,
+                "message_type": "motion_score",
+                "window_start_us": window.start_us,
+                "window_end_us": window.end_us,
+                "scores": motion_scores,
+            })
             prediction = self.model.predict_window(window)
             records.append({
                 "schema_version": 1,
