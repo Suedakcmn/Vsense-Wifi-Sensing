@@ -45,8 +45,8 @@ def parse_args():
     parser.add_argument(
         "--validation-repeat",
         type=int,
-        required=True,
         choices=DEVELOPMENT_REPEATS,
+        help="omit for fixed-epoch deployment training on all --train-repeats",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=30)
@@ -193,7 +193,12 @@ def save_training_curves(history: list[dict], output_path: Path) -> None:
     epochs = [item["epoch"] for item in history]
     figure, axes = plt.subplots(1, 2, figsize=(11, 4))
     axes[0].plot(epochs, [item["train"]["loss"] for item in history], label="train")
-    axes[0].plot(epochs, [item["validation"]["loss"] for item in history], label="validation")
+    if history[0]["validation"] is not None:
+        axes[0].plot(
+            epochs,
+            [item["validation"]["loss"] for item in history],
+            label="validation",
+        )
     axes[0].set_title("Loss")
     axes[0].legend()
     axes[1].plot(
@@ -201,11 +206,12 @@ def save_training_curves(history: list[dict], output_path: Path) -> None:
         [item["train"]["macro_f1"] for item in history],
         label="train",
     )
-    axes[1].plot(
-        epochs,
-        [item["validation"]["macro_f1"] for item in history],
-        label="validation",
-    )
+    if history[0]["validation"] is not None:
+        axes[1].plot(
+            epochs,
+            [item["validation"]["macro_f1"] for item in history],
+            label="validation",
+        )
     axes[1].set_title("Macro-F1")
     axes[1].legend()
     figure.tight_layout()
@@ -256,11 +262,13 @@ def main():
     train_dataset, manifest = load_repeats(
         args.cache_dir, train_repeats, args.max_train_samples
     )
-    validation_dataset, validation_manifest = load_repeat(
-        args.cache_dir, args.validation_repeat, args.max_validation_samples
-    )
-    if manifest != validation_manifest:
-        raise ValueError("training and validation cache manifests differ")
+    validation_dataset = None
+    if args.validation_repeat is not None:
+        validation_dataset, validation_manifest = load_repeat(
+            args.cache_dir, args.validation_repeat, args.max_validation_samples
+        )
+        if manifest != validation_manifest:
+            raise ValueError("training and validation cache manifests differ")
     generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_dataset,
@@ -268,10 +276,10 @@ def main():
         shuffle=True,
         generator=generator,
     )
-    validation_loader = DataLoader(
-        validation_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
+    validation_loader = (
+        DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False)
+        if validation_dataset is not None
+        else None
     )
     model_config = CNNModelConfig(
         input_receivers=manifest["tensor_shape"][0],
@@ -295,29 +303,43 @@ def main():
     checkpoint_path = args.output_dir / "best_model.pt"
     for epoch in range(1, args.epochs + 1):
         train_metrics = run_epoch(model, train_loader, criterion, device, optimizer)
-        validation_metrics = run_epoch(
-            model, validation_loader, criterion, device, optimizer=None
+        validation_metrics = (
+            run_epoch(model, validation_loader, criterion, device, optimizer=None)
+            if validation_loader is not None
+            else None
         )
         history.append(
             {
                 "epoch": epoch,
                 "train": {key: train_metrics[key] for key in ("loss", "accuracy", "macro_f1")},
-                "validation": {
-                    key: validation_metrics[key]
-                    for key in ("loss", "accuracy", "macro_f1")
-                },
+                "validation": (
+                    {
+                        key: validation_metrics[key]
+                        for key in ("loss", "accuracy", "macro_f1")
+                    }
+                    if validation_metrics is not None
+                    else None
+                ),
             }
         )
-        print(
+        message = (
             f"epoch={epoch:02d} train_loss={train_metrics['loss']:.4f} "
-            f"train_f1={train_metrics['macro_f1']:.3f} "
-            f"val_loss={validation_metrics['loss']:.4f} "
-            f"val_f1={validation_metrics['macro_f1']:.3f}"
+            f"train_f1={train_metrics['macro_f1']:.3f}"
         )
-        if validation_metrics["macro_f1"] > best_f1 + 1e-6:
-            best_f1 = validation_metrics["macro_f1"]
+        if validation_metrics is not None:
+            message += (
+                f" val_loss={validation_metrics['loss']:.4f} "
+                f"val_f1={validation_metrics['macro_f1']:.3f}"
+            )
+        print(message)
+        should_save = validation_metrics is None or (
+            validation_metrics["macro_f1"] > best_f1 + 1e-6
+        )
+        if should_save:
+            if validation_metrics is not None:
+                best_f1 = validation_metrics["macro_f1"]
+                epochs_without_improvement = 0
             best_epoch = epoch
-            epochs_without_improvement = 0
             torch.save(
                 {
                     "state_dict": model.state_dict(),
@@ -332,7 +354,7 @@ def main():
                 },
                 checkpoint_path,
             )
-        else:
+        elif validation_metrics is not None:
             epochs_without_improvement += 1
             if epochs_without_improvement >= args.patience:
                 print(f"early stopping at epoch {epoch}")
@@ -340,10 +362,20 @@ def main():
     training_seconds = time.perf_counter() - started
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["state_dict"])
-    final_validation = run_epoch(
-        model, validation_loader, criterion, device, optimizer=None
+    final_validation = (
+        run_epoch(model, validation_loader, criterion, device, optimizer=None)
+        if validation_loader is not None
+        else None
     )
-    inference_ms = measure_inference_ms(model, validation_dataset.tensors[0], device)
+    final_training_fit = run_epoch(
+        model, train_loader, criterion, device, optimizer=None
+    )
+    inference_sample = (
+        validation_dataset.tensors[0]
+        if validation_dataset is not None
+        else train_dataset.tensors[0]
+    )
+    inference_ms = measure_inference_ms(model, inference_sample, device)
     report = {
         "schema_version": MODEL_SCHEMA_VERSION,
         "model_type": "small_2d_cnn",
@@ -351,6 +383,7 @@ def main():
         "class_names": CLASS_NAMES,
         "train_repeats": train_repeats,
         "validation_repeat": args.validation_repeat,
+        "deployment_training": args.validation_repeat is None,
         "test_repeat_evaluated": False,
         "seed": args.seed,
         "epochs_requested": args.epochs,
@@ -365,19 +398,29 @@ def main():
         "inference_ms_per_window": inference_ms,
         "class_weights": class_weights.detach().cpu().tolist(),
         "training_samples": len(train_dataset),
-        "validation_samples": len(validation_dataset),
-        "validation": {
-            "loss": final_validation["loss"],
-            "accuracy": final_validation["accuracy"],
-            "macro_f1": final_validation["macro_f1"],
-            "classification_report": classification_report(
-                final_validation["truth"],
-                final_validation["prediction"],
-                labels=list(range(len(CLASS_NAMES))),
-                target_names=CLASS_NAMES,
-                output_dict=True,
-                zero_division=0,
-            ),
+        "validation_samples": len(validation_dataset) if validation_dataset is not None else 0,
+        "validation": (
+            {
+                "loss": final_validation["loss"],
+                "accuracy": final_validation["accuracy"],
+                "macro_f1": final_validation["macro_f1"],
+                "classification_report": classification_report(
+                    final_validation["truth"],
+                    final_validation["prediction"],
+                    labels=list(range(len(CLASS_NAMES))),
+                    target_names=CLASS_NAMES,
+                    output_dict=True,
+                    zero_division=0,
+                ),
+            }
+            if final_validation is not None
+            else None
+        ),
+        "training_fit": {
+            "loss": final_training_fit["loss"],
+            "accuracy": final_training_fit["accuracy"],
+            "macro_f1": final_training_fit["macro_f1"],
+            "honesty_note": "resubstitution metric; not a generalization estimate",
         },
         "history": history,
     }
@@ -385,15 +428,22 @@ def main():
         json.dumps(report, indent=2), encoding="utf-8"
     )
     save_training_curves(history, args.output_dir / "training_curves.png")
-    save_confusion_matrix(
-        final_validation["truth"],
-        final_validation["prediction"],
-        args.output_dir / "confusion_matrix.png",
-    )
-    print(
-        f"best_epoch={best_epoch} validation_macro_f1={final_validation['macro_f1']:.3f} "
-        f"inference_ms={inference_ms:.3f} training_seconds={training_seconds:.1f}"
-    )
+    if final_validation is not None:
+        save_confusion_matrix(
+            final_validation["truth"],
+            final_validation["prediction"],
+            args.output_dir / "confusion_matrix.png",
+        )
+        print(
+            f"best_epoch={best_epoch} validation_macro_f1={final_validation['macro_f1']:.3f} "
+            f"inference_ms={inference_ms:.3f} training_seconds={training_seconds:.1f}"
+        )
+    else:
+        print(
+            f"deployment_epochs={best_epoch} training_fit_macro_f1="
+            f"{final_training_fit['macro_f1']:.3f} inference_ms={inference_ms:.3f} "
+            f"training_seconds={training_seconds:.1f}"
+        )
     print(f"Results: {args.output_dir}")
 
 
