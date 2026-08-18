@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+from ml.constants import CLASS_NAMES
+
 
 @dataclass(frozen=True)
 class WindowConfig:
@@ -128,7 +130,7 @@ def iter_session_windows(
 
 
 def discover_main_sessions(dataset_dir: Path) -> list[Path]:
-    """Select the canonical three repeats for each of the five scenarios."""
+    """Select the canonical three repeats for each modelled scenario."""
     candidates: dict[tuple[str, int], list[Path]] = {}
     for session_dir in (dataset_dir / "sessions").iterdir():
         metadata_path = session_dir / "metadata.json"
@@ -137,16 +139,14 @@ def discover_main_sessions(dataset_dir: Path) -> list[Path]:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         scenario = metadata.get("scenario")
         repeat = metadata.get("repeat")
-        if scenario not in {"empty_room", "walking", "sitting", "standing", "desk_work"}:
+        if scenario not in set(CLASS_NAMES):
             continue
         if repeat not in {1, 2, 3} or metadata.get("status") != "completed":
-            continue
-        if scenario == "sitting" and metadata.get("subject") == "two_people":
             continue
         candidates.setdefault((scenario, repeat), []).append(session_dir)
 
     selected = []
-    for scenario in ("empty_room", "walking", "sitting", "standing", "desk_work"):
+    for scenario in CLASS_NAMES:
         for repeat in (1, 2, 3):
             matches = candidates.get((scenario, repeat), [])
             if len(matches) != 1:

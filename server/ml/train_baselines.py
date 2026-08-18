@@ -21,10 +21,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-
-CLASS_NAMES = ["empty_room", "walking", "sitting", "standing", "desk_work"]
-META_COLUMNS = {"session_id", "subject", "label", "window_start_us", "window_end_us"}
-
+from ml.constants import CLASS_NAMES, META_COLUMNS, MODEL_SCHEMA_VERSION
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -92,6 +89,7 @@ def main():
         if manifest_path.is_file()
         else {}
     )
+    table = table[table["label"].isin(CLASS_NAMES)].copy()
     feature_columns = [column for column in table.columns if column not in META_COLUMNS]
     train, validation, test = split_by_repeat(table)
     for name, split in (("train", train), ("validation", validation), ("test", test)):
@@ -162,7 +160,7 @@ def main():
     (args.output_dir / "feature_config.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": MODEL_SCHEMA_VERSION,
                 "model_type": best_name,
                 "window_seconds": 2.0,
                 "stride_seconds": 1.0,
@@ -191,7 +189,7 @@ def main():
         for name, split in (("train", train), ("validation", validation), ("test", test))
     }
     report = {
-        "schema_version": 1,
+        "schema_version": MODEL_SCHEMA_VERSION,
         "selection_metric": "validation macro_f1",
         "selected_model": best_name,
         "split_policy": "repeat 1=train, repeat 2=validation, repeat 3=test",

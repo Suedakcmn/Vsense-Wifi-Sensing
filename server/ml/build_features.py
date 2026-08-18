@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from ml.features import extract_window_features, feature_names, load_subcarrier_indices
+from ml.features import (
+    NORMALIZATION_MODES,
+    extract_window_features,
+    feature_names,
+    load_subcarrier_indices,
+)
+from ml.constants import MODEL_SCHEMA_VERSION
 from ml.windows import WindowConfig, discover_main_sessions, iter_session_windows
 
 
@@ -23,8 +29,9 @@ def parse_args():
     parser.add_argument("--min-rows-per-node", type=int, default=20)
     parser.add_argument(
         "--normalization",
-        choices=("none", "zscore", "robust"),
+        choices=NORMALIZATION_MODES,
         default="none",
+        help="per-window, per-subcarrier signal normalization",
     )
     parser.add_argument("--spectral-features", action="store_true")
     parser.add_argument("--sample-rate-hz", type=float, default=40.0)
@@ -83,8 +90,10 @@ def main():
     table = pd.DataFrame.from_records(records)
     table.to_parquet(args.output, index=False)
     manifest = {
-        "schema_version": 1,
+        "schema_version": MODEL_SCHEMA_VERSION,
         "feature_table": args.output.name,
+        "feature_extractor": "ml.features.extract_window_features",
+        "signal_normalization": args.normalization,
         "window_seconds": args.window_seconds,
         "stride_seconds": args.stride_seconds,
         "trim_seconds": args.trim_seconds,
@@ -96,6 +105,7 @@ def main():
         "spectral_features": args.spectral_features,
         "sample_rate_hz": args.sample_rate_hz,
         "feature_count": len(names),
+        "feature_columns": names,
         "window_count": len(table),
         "sessions": summaries,
     }

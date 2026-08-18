@@ -9,6 +9,7 @@ from ml.windows import CSIWindow
 
 
 STAT_NAMES = ("mean", "std", "median", "iqr", "min", "max", "energy", "diff_mean")
+NORMALIZATION_MODES = ("none", "zscore", "robust")
 SPECTRAL_NAMES = (
     "dominant_frequency",
     "spectral_energy",
@@ -53,19 +54,30 @@ def feature_names(
     return names
 
 
-def _normalize(selected: np.ndarray, method: str) -> np.ndarray:
-    if method == "none":
-        return selected
-    if method == "zscore":
-        center = np.mean(selected, axis=0, keepdims=True)
-        scale = np.std(selected, axis=0, keepdims=True)
-    elif method == "robust":
-        center = np.median(selected, axis=0, keepdims=True)
-        q25, q75 = np.percentile(selected, [25, 75], axis=0)
+def normalize_amplitude(
+    amplitude: np.ndarray,
+    mode: str = "none",
+    epsilon: float = 1e-6,
+) -> np.ndarray:
+    """Normalize each subcarrier across time inside one receiver window."""
+    values = np.asarray(amplitude, dtype=np.float32)
+    if values.ndim != 2:
+        raise ValueError("amplitude must have shape [time, subcarrier]")
+    if mode == "none":
+        return values
+    if mode == "zscore":
+        center = np.mean(values, axis=0, keepdims=True)
+        scale = np.std(values, axis=0, keepdims=True)
+    elif mode == "robust":
+        center = np.median(values, axis=0, keepdims=True)
+        q25, q75 = np.percentile(values, [25, 75], axis=0)
         scale = (q75 - q25)[None, :]
     else:
-        raise ValueError(f"unsupported window normalization: {method}")
-    return (selected - center) / np.maximum(scale, 1e-6)
+        raise ValueError(
+            f"unknown normalization mode {mode!r}; expected one of {NORMALIZATION_MODES}"
+        )
+    scale = np.where(scale > epsilon, scale, 1.0)
+    return ((values - center) / scale).astype(np.float32)
 
 
 def _resample(
@@ -139,7 +151,7 @@ def _node_features(
     selected = amplitude[:, indices]
     if spectral_features:
         selected = _resample(rows, selected, start_us, end_us, sample_rate_hz)
-    selected = _normalize(selected, normalization)
+    selected = normalize_amplitude(selected, normalization)
     temporal_diff = np.abs(np.diff(selected, axis=0))
     q25, q75 = np.percentile(selected, [25, 75], axis=0)
     statistics = np.stack(
