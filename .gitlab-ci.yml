@@ -1,0 +1,42 @@
+stages:
+  - verify
+
+default:
+  interruptible: true
+
+python:
+  stage: verify
+  image: python:3.11-slim
+  cache:
+    key:
+      files:
+        - server/requirements.txt
+    paths:
+      - .cache/pip
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    MPLCONFIGDIR: "$CI_PROJECT_DIR/.cache/matplotlib"
+    PYTHONPYCACHEPREFIX: "$CI_PROJECT_DIR/.cache/pycache"
+  before_script:
+    - python -m pip install --upgrade pip
+    - python -m pip install -r server/requirements.txt
+  script:
+    - python -m unittest discover -s server -p 'test_*.py'
+    - python server/validate_model_artifact.py dataset-v1/models/baseline_v1 --require-report
+
+web:
+  stage: verify
+  image: node:22-slim
+  cache:
+    key:
+      files:
+        - web/package-lock.json
+    paths:
+      - .npm/
+  variables:
+    npm_config_cache: "$CI_PROJECT_DIR/.npm"
+  before_script:
+    - npm --prefix web ci
+  script:
+    - npm --prefix web test
+    - npm --prefix web run build

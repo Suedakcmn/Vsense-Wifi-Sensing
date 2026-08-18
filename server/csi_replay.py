@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -268,7 +269,10 @@ def main():
             client.loop_stop()
             client.disconnect()
 
-    print(f"Replayed {count} CSI frames.")
+    print(
+        f"Replayed {count} CSI frames.",
+        file=sys.stderr if args.transport == "stdout" else sys.stdout,
+    )
 
 
 if __name__ == "__main__":
