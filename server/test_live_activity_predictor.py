@@ -176,6 +176,31 @@ class LiveActivityPredictorTest(unittest.TestCase):
             self.assertIn("invalid JSON", errors.getvalue())
             self.assertIn("non-object JSON", errors.getvalue())
 
+    def test_stream_forwards_dashboard_telemetry_but_not_raw_csi(self):
+        with TemporaryDirectory() as temporary_directory:
+            artifact_dir = Path(temporary_directory)
+            write_window_artifact(artifact_dir)
+            predictor = LiveActivityPredictor(artifact_dir)
+            records = [
+                {"message_type": "node_status", "node_id": "rx_01", "status": "online"},
+                {"message_type": "health", "node_id": "rx_01", "csi_pps": 80},
+                {"message_type": "zone_prediction", "timestamp_us": 1, "zone": "office"},
+                csi_row(0, "rx_01"),
+                {"message_type": "ground_truth", "node_id": "ld2450_01"},
+            ]
+            output = io.StringIO()
+            run_stream(
+                predictor,
+                io.StringIO("".join(json.dumps(value) + "\n" for value in records)),
+                output,
+                io.StringIO(),
+            )
+            forwarded = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(
+                [record["message_type"] for record in forwarded],
+                ["node_status", "health", "zone_prediction"],
+            )
+
     def test_main_stops_cleanly_on_keyboard_interrupt(self):
         with (
             patch.object(live_activity_predictor, "parse_args") as parse_args,

@@ -10,6 +10,8 @@ firmware/managed_components/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+web/node_modules/
+web/dist/
 
 # Data
 data/*.parquet

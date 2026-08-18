@@ -6,3 +6,7 @@ paho-mqtt
 scipy
 scikit-learn
 joblib
+fastapi
+uvicorn
+websockets
+httpx
