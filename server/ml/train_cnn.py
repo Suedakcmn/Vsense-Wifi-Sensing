@@ -53,6 +53,11 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument(
+        "--normalization-layer",
+        choices=("batchnorm", "groupnorm"),
+        default="batchnorm",
+    )
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-train-samples", type=int)
@@ -285,6 +290,7 @@ def main():
         input_receivers=manifest["tensor_shape"][0],
         input_subcarriers=manifest["tensor_shape"][2],
         class_count=len(CLASS_NAMES),
+        normalization_layer=args.normalization_layer,
     )
     model = SmallCSIConvNet(model_config).to(device)
     class_weights = balanced_class_weights(train_dataset.tensors[1]).to(device)
@@ -392,6 +398,7 @@ def main():
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
         "weight_decay": args.weight_decay,
+        "normalization_layer": args.normalization_layer,
         "patience": args.patience,
         "device": str(device),
         "training_seconds": training_seconds,

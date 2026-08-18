@@ -16,6 +16,7 @@ class CNNModelConfig:
     input_subcarriers: int = 20
     class_count: int = len(CLASS_NAMES)
     dropout: float = 0.30
+    normalization_layer: str = "batchnorm"
 
     def __post_init__(self):
         if self.input_receivers <= 0 or self.input_subcarriers <= 0:
@@ -24,6 +25,8 @@ class CNNModelConfig:
             raise ValueError("class_count must be at least two")
         if not 0.0 <= self.dropout < 1.0:
             raise ValueError("dropout must be in [0, 1)")
+        if self.normalization_layer not in {"batchnorm", "groupnorm"}:
+            raise ValueError("normalization_layer must be batchnorm or groupnorm")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -35,17 +38,24 @@ class SmallCSIConvNet(nn.Module):
     def __init__(self, config: CNNModelConfig = CNNModelConfig()):
         super().__init__()
         self.config = config
+
+        def normalization(channels: int) -> nn.Module:
+            if config.normalization_layer == "batchnorm":
+                return nn.BatchNorm2d(channels)
+            groups = 8 if channels >= 32 else 4
+            return nn.GroupNorm(groups, channels)
+
         self.features = nn.Sequential(
             nn.Conv2d(config.input_receivers, 16, kernel_size=(5, 3), padding=(2, 1)),
-            nn.BatchNorm2d(16),
+            normalization(16),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=(2, 2)),
             nn.Conv2d(16, 32, kernel_size=(5, 3), padding=(2, 1)),
-            nn.BatchNorm2d(32),
+            normalization(32),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=(2, 2)),
             nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1),
-            nn.BatchNorm2d(64),
+            normalization(64),
             nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool2d((1, 1)),
         )

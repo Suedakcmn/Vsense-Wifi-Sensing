@@ -131,6 +131,22 @@ class MLPipelineTest(unittest.TestCase):
         after = model.classifier[-1].weight.detach()
         self.assertFalse(torch.equal(before, after))
 
+    def test_groupnorm_has_consistent_train_and_eval_outputs(self):
+        torch.manual_seed(42)
+        model = SmallCSIConvNet(
+            CNNModelConfig(dropout=0.0, normalization_layer="groupnorm")
+        )
+        inputs = torch.randn(4, 2, 80, 20)
+        model.train()
+        training_output = model(inputs)
+        model.eval()
+        evaluation_output = model(inputs)
+        self.assertTrue(torch.allclose(training_output, evaluation_output, atol=1e-6))
+
+    def test_cnn_rejects_unknown_normalization_layer(self):
+        with self.assertRaisesRegex(ValueError, "normalization_layer"):
+            CNNModelConfig(normalization_layer="invalid")
+
     def test_cnn_window_tensor_has_fixed_shape_and_normalization(self):
         timestamps = [0, 17_000, 51_000, 88_000, 131_000, 177_000]
         rows = [
