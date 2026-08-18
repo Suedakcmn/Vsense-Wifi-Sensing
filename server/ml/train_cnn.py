@@ -21,7 +21,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from ml.cnn_model import CNNModelConfig, SmallCSIConvNet
-from ml.constants import CLASS_NAMES, MODEL_SCHEMA_VERSION
+from ml.constants import CLASS_NAMES, DEVELOPMENT_REPEATS, MODEL_SCHEMA_VERSION
 
 
 matplotlib.use("Agg")
@@ -35,8 +35,19 @@ def parse_args():
         type=Path,
         default=Path("dataset-v1/processed/cnn_2s_40hz_zscore"),
     )
-    parser.add_argument("--train-repeat", type=int, required=True, choices=(1, 2))
-    parser.add_argument("--validation-repeat", type=int, required=True, choices=(1, 2))
+    parser.add_argument(
+        "--train-repeats",
+        type=int,
+        nargs="+",
+        required=True,
+        choices=DEVELOPMENT_REPEATS,
+    )
+    parser.add_argument(
+        "--validation-repeat",
+        type=int,
+        required=True,
+        choices=DEVELOPMENT_REPEATS,
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -91,6 +102,38 @@ def load_repeat(cache_dir: Path, repeat: int, max_samples: int | None = None):
     all_inputs = torch.cat(inputs)
     all_targets = torch.cat(targets)
     return TensorDataset(all_inputs, all_targets), manifest
+
+
+def load_repeats(
+    cache_dir: Path,
+    repeats: list[int],
+    max_samples: int | None = None,
+):
+    if not repeats:
+        raise ValueError("at least one training repeat is required")
+    minimum_samples = len(repeats) * len(CLASS_NAMES)
+    if max_samples is not None and max_samples < minimum_samples:
+        raise ValueError(
+            f"max_samples must be at least {minimum_samples} for {len(repeats)} repeats"
+        )
+    per_repeat_limit = None if max_samples is None else max_samples // len(repeats)
+    remainder = 0 if max_samples is None else max_samples % len(repeats)
+    datasets = []
+    manifest = None
+    for index, repeat in enumerate(repeats):
+        limit = None
+        if per_repeat_limit is not None:
+            limit = per_repeat_limit + (1 if index < remainder else 0)
+        dataset, current_manifest = load_repeat(cache_dir, repeat, limit)
+        if manifest is None:
+            manifest = current_manifest
+        elif manifest != current_manifest:
+            raise ValueError("training cache manifests differ")
+        datasets.append(dataset)
+    return TensorDataset(
+        torch.cat([dataset.tensors[0] for dataset in datasets]),
+        torch.cat([dataset.tensors[1] for dataset in datasets]),
+    ), manifest
 
 
 def balanced_class_weights(targets: torch.Tensor) -> torch.Tensor:
@@ -203,14 +246,15 @@ def measure_inference_ms(model, sample: torch.Tensor, device: torch.device) -> f
 
 def main():
     args = parse_args()
-    if args.train_repeat == args.validation_repeat:
-        raise ValueError("training and validation repeats must be different")
+    train_repeats = sorted(set(args.train_repeats))
+    if args.validation_repeat in train_repeats:
+        raise ValueError("training and validation repeats must be disjoint")
     if args.epochs <= 0 or args.batch_size <= 0 or args.patience <= 0:
         raise ValueError("epochs, batch size, and patience must be positive")
     set_seed(args.seed)
     device = select_device(args.device)
-    train_dataset, manifest = load_repeat(
-        args.cache_dir, args.train_repeat, args.max_train_samples
+    train_dataset, manifest = load_repeats(
+        args.cache_dir, train_repeats, args.max_train_samples
     )
     validation_dataset, validation_manifest = load_repeat(
         args.cache_dir, args.validation_repeat, args.max_validation_samples
@@ -305,7 +349,7 @@ def main():
         "model_type": "small_2d_cnn",
         "model_config": model_config.to_dict(),
         "class_names": CLASS_NAMES,
-        "train_repeat": args.train_repeat,
+        "train_repeats": train_repeats,
         "validation_repeat": args.validation_repeat,
         "test_repeat_evaluated": False,
         "seed": args.seed,

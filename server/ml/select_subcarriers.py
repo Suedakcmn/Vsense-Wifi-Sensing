@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from csi_utils import csi_to_amplitude
-from ml.constants import CLASS_NAMES, MODEL_SCHEMA_VERSION
+from ml.constants import CLASS_NAMES, DEVELOPMENT_REPEATS, MODEL_SCHEMA_VERSION
 from ml.features import normalize_amplitude
 from ml.subcarriers import (
     combine_receiver_scores,
@@ -23,7 +23,13 @@ from ml.windows import WindowConfig, discover_main_sessions, iter_session_window
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-dir", type=Path, default=Path("dataset-v1"))
-    parser.add_argument("--train-repeat", type=int, required=True, choices=(1, 2))
+    parser.add_argument(
+        "--train-repeats",
+        type=int,
+        nargs="+",
+        required=True,
+        choices=DEVELOPMENT_REPEATS,
+    )
     parser.add_argument("--top-n", type=int, default=20)
     parser.add_argument("--window-seconds", type=float, default=2.0)
     parser.add_argument("--stride-seconds", type=float, default=1.0)
@@ -51,6 +57,7 @@ def dynamic_subcarrier_features(rows: list[dict]) -> np.ndarray:
 
 def main():
     args = parse_args()
+    train_repeats = sorted(set(args.train_repeats))
     window_config = WindowConfig(
         duration_us=int(args.window_seconds * 1_000_000),
         stride_us=int(args.stride_seconds * 1_000_000),
@@ -63,7 +70,8 @@ def main():
     sessions = []
     expected_subcarriers = None
     for session_dir in discover_main_sessions(args.dataset_dir):
-        if session_repeat(session_dir) != args.train_repeat:
+        repeat = session_repeat(session_dir)
+        if repeat not in train_repeats:
             continue
         accepted = 0
         for window in iter_session_windows(session_dir, window_config):
@@ -86,6 +94,7 @@ def main():
         sessions.append(
             {
                 "session_id": session_dir.name,
+                "repeat": repeat,
                 "label": window.label if accepted else None,
                 "windows": accepted,
             }
@@ -93,8 +102,15 @@ def main():
         print(f"{session_dir.name}: {accepted} training windows")
     if expected_subcarriers is None:
         raise ValueError("no training windows were found")
-    if set(labels) != set(CLASS_NAMES):
-        raise ValueError(f"training repeat is missing classes: {set(CLASS_NAMES) - set(labels)}")
+    for repeat in train_repeats:
+        repeat_labels = {
+            item["label"] for item in sessions if item["repeat"] == repeat
+        }
+        if repeat_labels != set(CLASS_NAMES):
+            raise ValueError(
+                f"training repeat {repeat} is missing classes: "
+                f"{set(CLASS_NAMES) - repeat_labels}"
+            )
     label_array = np.asarray(labels)
     scores_by_node = {
         node_id: multiclass_fisher_scores(np.stack(values), label_array)
@@ -112,8 +128,8 @@ def main():
     )
     report = {
         "schema_version": MODEL_SCHEMA_VERSION,
-        "selection_scope": "training repeat only",
-        "train_repeat": args.train_repeat,
+        "selection_scope": "training repeats only",
+        "train_repeats": train_repeats,
         "validation_or_test_used": False,
         "method": "per-window zscore temporal-difference multi-class Fisher score",
         "receiver_combination": "normalize each RX score by its max, then mean",

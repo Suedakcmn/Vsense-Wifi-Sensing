@@ -19,6 +19,7 @@ from ml.subcarriers import (
     multiclass_fisher_scores,
     select_ranked_subcarriers,
 )
+from ml.train_cnn import load_repeats
 import pandas as pd
 
 
@@ -34,6 +35,39 @@ def csi_row(timestamp, node_id, value=3):
 
 
 class MLPipelineTest(unittest.TestCase):
+    def test_cnn_training_combines_development_repeats(self):
+        with TemporaryDirectory() as temporary_directory:
+            cache_dir = Path(temporary_directory)
+            sessions = []
+            for repeat in (1, 2, 4):
+                for class_index, label in enumerate(
+                    ("empty_room", "walking", "standing", "desk_work")
+                ):
+                    filename = f"{label}_r{repeat:02d}.pt"
+                    torch.save(
+                        {
+                            "inputs": torch.full((2, 2, 8, 3), float(repeat)),
+                            "targets": torch.full((2,), class_index, dtype=torch.long),
+                        },
+                        cache_dir / filename,
+                    )
+                    sessions.append(
+                        {
+                            "session_id": filename.removesuffix(".pt"),
+                            "repeat": repeat,
+                            "label": label,
+                            "file": filename,
+                        }
+                    )
+            (cache_dir / "manifest.json").write_text(
+                json.dumps({"sessions": sessions}), encoding="utf-8"
+            )
+
+            dataset, _ = load_repeats(cache_dir, [1, 4])
+
+            self.assertEqual(len(dataset), 16)
+            self.assertEqual(set(dataset.tensors[1].tolist()), {0, 1, 2, 3})
+
     def test_subcarrier_ignore_indices_repeat_for_128_bins(self):
         ignored_64 = get_ignore_indices(64)
         self.assertEqual(

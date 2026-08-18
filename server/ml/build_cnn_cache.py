@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 
 from ml.cnn_data import CLASS_TO_INDEX, CNNTensorConfig, window_to_tensor
-from ml.constants import CLASS_NAMES, MODEL_SCHEMA_VERSION
+from ml.constants import CLASS_NAMES, DEVELOPMENT_REPEATS, MODEL_SCHEMA_VERSION
 from ml.features import load_subcarrier_indices
 from ml.windows import WindowConfig, discover_main_sessions, iter_session_windows
 
@@ -85,8 +85,11 @@ def build_session_cache(
 def main():
     args = parse_args()
     repeats = sorted(set(args.repeats))
-    if not repeats or any(repeat not in {1, 2, 3} for repeat in repeats):
-        raise ValueError("repeats must contain only 1, 2, or 3")
+    if not repeats or any(repeat not in DEVELOPMENT_REPEATS for repeat in repeats):
+        raise ValueError(
+            f"development repeats must contain only {list(DEVELOPMENT_REPEATS)}; "
+            "r03 remains locked"
+        )
     window_config = WindowConfig(
         duration_us=int(args.window_seconds * 1_000_000),
         stride_us=int(args.stride_seconds * 1_000_000),
